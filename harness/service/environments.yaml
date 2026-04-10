@@ -1,0 +1,20 @@
+environments:
+  - environment:
+      name: dev
+      identifier: dev
+      description: "Development / pre-production environment"
+      type: PreProduction
+      tags:
+        team: platform
+        demo: "true"
+      variables: []
+
+  - environment:
+      name: production
+      identifier: production
+      description: "Production environment — governed by change-window OPA policy"
+      type: Production
+      tags:
+        team: platform
+        demo: "true"
+      variables: []

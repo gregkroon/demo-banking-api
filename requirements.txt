@@ -1,0 +1,8 @@
+# Demo requirements — VULNERABLE versions intentional for STO showcase
+Flask==2.3.3
+Werkzeug==2.3.7
+cryptography==38.0.1
+Pillow==9.0.0
+PyJWT==1.7.1
+requests==2.31.0
+gunicorn==21.2.0

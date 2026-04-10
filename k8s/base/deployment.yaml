@@ -1,0 +1,60 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: demo-banking-api
+  labels:
+    app: demo-banking-api
+    team: platform
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: demo-banking-api
+  template:
+    metadata:
+      labels:
+        app: demo-banking-api
+    spec:
+      containers:
+        - name: demo-banking-api
+          image: demo-banking-api:latest
+          ports:
+            - containerPort: 8080
+          env:
+            - name: SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: banking-api-secret
+                  key: secret-key
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "128Mi"
+            limits:
+              cpu: "500m"
+              memory: "256Mi"
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 10
+            periodSeconds: 15
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 10
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: demo-banking-api
+spec:
+  selector:
+    app: demo-banking-api
+  ports:
+    - protocol: TCP
+      port: 80
+      targetPort: 8080
+  type: ClusterIP

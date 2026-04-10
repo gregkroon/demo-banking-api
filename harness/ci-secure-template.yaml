@@ -1,0 +1,146 @@
+template:
+  name: ci-secure-template
+  identifier: ci_secure_template
+  versionLabel: "1.0"
+  type: Pipeline
+  projectIdentifier: claude
+  orgIdentifier: default
+  description: "Secure CI pipeline with STO scanning, SBOM generation, and OPA policy gates"
+  tags:
+    demo: "true"
+    team: platform
+  spec:
+    stages:
+      - stage:
+          name: Build and Test
+          identifier: build_and_test
+          type: CI
+          spec:
+            cloneCodebase: true
+            infrastructure:
+              type: KubernetesDirect
+              spec:
+                connectorRef: account.harnessImage
+                namespace: harness-builds
+                automountServiceAccountToken: true
+                nodeSelector: {}
+                os: Linux
+            execution:
+              steps:
+                - step:
+                    type: Run
+                    name: Install Dependencies
+                    identifier: install_deps
+                    spec:
+                      connectorRef: account.harnessImage
+                      image: python:3.11-slim
+                      shell: Sh
+                      command: |
+                        pip install --no-cache-dir -r requirements.txt
+                        pip install pytest pytest-cov
+
+                - step:
+                    type: Run
+                    name: Run Unit Tests
+                    identifier: run_tests
+                    spec:
+                      connectorRef: account.harnessImage
+                      image: python:3.11-slim
+                      shell: Sh
+                      command: |
+                        pip install --no-cache-dir -r requirements.txt pytest pytest-cov
+                        pytest tests/ -v --tb=short --junitxml=test-results.xml \
+                          --cov=app --cov-report=xml:coverage.xml
+
+                - step:
+                    type: BuildAndPushDockerRegistry
+                    name: Build and Push Image
+                    identifier: build_push
+                    spec:
+                      connectorRef: account.harnessImage
+                      repo: <+pipeline.variables.IMAGE_REPO>
+                      tags:
+                        - <+pipeline.sequenceId>
+                        - latest
+                      dockerfile: Dockerfile
+                      context: .
+                      buildArgs:
+                        BUILD_ID: <+pipeline.sequenceId>
+
+      - stage:
+          name: Security Scan
+          identifier: security_scan
+          type: SecurityTests
+          spec:
+            cloneCodebase: false
+            infrastructure:
+              useFromStage:
+                stage: build_and_test
+            execution:
+              steps:
+                - step:
+                    type: AquaTrivy
+                    name: Container Vulnerability Scan
+                    identifier: trivy_scan
+                    spec:
+                      mode: orchestration
+                      config: default
+                      target:
+                        name: <+pipeline.variables.IMAGE_REPO>
+                        type: container
+                        variant: <+pipeline.sequenceId>
+                      advanced:
+                        log:
+                          level: info
+                        fail_on_severity: critical
+                      privileged: true
+                      image:
+                        type: docker_v2
+                        name: <+pipeline.variables.IMAGE_REPO>
+                        domain: docker.io
+                        tag: <+pipeline.sequenceId>
+
+                - step:
+                    type: Run
+                    name: Generate SBOM
+                    identifier: generate_sbom
+                    spec:
+                      connectorRef: account.harnessImage
+                      image: anchore/syft:latest
+                      shell: Sh
+                      command: |
+                        syft <+pipeline.variables.IMAGE_REPO>:<+pipeline.sequenceId> \
+                          -o spdx-json > sbom.json
+                        echo "SBOM generated: $(cat sbom.json | python3 -c 'import sys,json; d=json.load(sys.stdin); print(len(d.get(\"packages\",[])))') packages"
+
+      - stage:
+          name: OPA Policy Gate
+          identifier: opa_policy_gate
+          type: Approval
+          spec:
+            execution:
+              steps:
+                - step:
+                    type: HarnessApproval
+                    name: Security Policy Check
+                    identifier: security_policy_check
+                    spec:
+                      approvalMessage: |
+                        STO scan complete. Review findings above.
+                        Pipeline will be blocked if critical CVEs exist or SBOM is missing.
+                        This gate is enforced by OPA policy: image_security_policy_set
+                      includePipelineExecutionHistory: true
+                      isAutoRejectEnabled: false
+                      approvers:
+                        minimumCount: 1
+                        disallowPipelineExecutor: false
+                        userGroups:
+                          - account._account_all_users
+                      approverInputs: []
+
+  variables:
+    - name: IMAGE_REPO
+      type: String
+      description: "Docker image repository name"
+      required: true
+      value: <+input>

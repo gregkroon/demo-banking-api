@@ -1,0 +1,37 @@
+service:
+  name: demo-banking-api
+  identifier: demo_banking_api
+  description: "Demo Banking API — Harness + Claude Code showcase service"
+  tags:
+    team: platform
+    tier: backend
+    demo: "true"
+  serviceDefinition:
+    type: Kubernetes
+    spec:
+      manifests:
+        - manifest:
+            identifier: k8s_manifests
+            type: K8sManifest
+            spec:
+              store:
+                type: HarnessCode
+                spec:
+                  repoName: demo-banking-api
+                  gitFetchType: Branch
+                  branch: main
+                  paths:
+                    - k8s/base
+              valuesPaths: []
+              skipResourceVersioning: false
+              enableDeclarativeRollback: false
+      artifacts:
+        primary:
+          primaryArtifactRef: primary
+          sources:
+            - identifier: primary
+              type: DockerRegistry
+              spec:
+                connectorRef: account.harnessImage
+                imagePath: demo-banking-api
+                tag: latest
