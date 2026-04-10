@@ -4,6 +4,7 @@ kind: Kustomization
 namespace: banking-prod
 
 resources:
+  - namespace.yaml
   - ../../base
   - hpa.yaml
 
@@ -18,5 +19,5 @@ patches:
 
 images:
   - name: demo-banking-api
-    newName: harness.io/demo-banking-api
+    newName: pkg.harness.io/ke-e1fx2so2zal2txqpljg/demo-banking/demo-banking-api
     newTag: latest
