@@ -3,6 +3,3 @@ kind: Kustomization
 
 resources:
   - deployment.yaml
-
-commonLabels:
-  managed-by: harness
