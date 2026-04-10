@@ -17,7 +17,4 @@ patches:
       kind: Deployment
       name: demo-banking-api
 
-images:
-  - name: demo-banking-api
-    newName: pkg.harness.io/ke-e1fx2so2zal2txqpljg/demo-banking/demo-banking-api
-    newTag: latest
+# Image tag is managed by Harness artifact expression <+artifact.image> in deployment.yaml

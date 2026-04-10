@@ -17,7 +17,7 @@ spec:
     spec:
       containers:
         - name: demo-banking-api
-          image: demo-banking-api:latest
+          image: <+artifact.image>
           ports:
             - containerPort: 8080
           env:
