@@ -22,12 +22,6 @@ spec:
           image: pkg.harness.io/ke-e1fx2so2zal2txqpljg/banking-api/demo-banking-api:latest
           ports:
             - containerPort: 8080
-          env:
-            - name: SECRET_KEY
-              valueFrom:
-                secretKeyRef:
-                  name: banking-api-secret
-                  key: secret-key
           resources:
             requests:
               cpu: "100m"
