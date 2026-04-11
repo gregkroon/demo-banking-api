@@ -17,7 +17,7 @@ spec:
     spec:
       containers:
         - name: demo-banking-api
-          image: pkg.harness.io/ke-e1fx2so2zal2txqpljg/demo-banking/demo-banking-api:latest
+          image: pkg.harness.io/ke-e1fx2so2zal2txqpljg/banking-api/demo-banking-api:latest
           ports:
             - containerPort: 8080
           env:
