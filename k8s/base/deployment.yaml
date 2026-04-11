@@ -18,7 +18,7 @@ spec:
       containers:
         - name: demo-banking-api
           image: pkg.harness.io/ke-e1fx2so2zal2txqpljg/banking-api/demo-banking-api:latest
-          imagePullSecrets:
+      imagePullSecrets:
         - name: harness-registry-secret
           ports:
             - containerPort: 8080
