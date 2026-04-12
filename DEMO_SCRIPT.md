@@ -1,0 +1,322 @@
+# Harness + Claude Code — Demo Script
+
+**Theme:** Claude is the developer's AI pair programmer AND their platform engineer. Harness templates are the guardrails that ensure every deployment — regardless of who writes the code — goes through security scanning, quality gates, and governed approval before reaching production.
+
+**Runtime:** ~20 minutes total (10 min per scenario)
+
+---
+
+## Setup Checklist (before the demo)
+
+- [ ] Terminal open in `/mcp/demo` with Claude Code running (`claude`)
+- [ ] Harness UI open, logged in, on the `claude` project
+- [ ] Second browser tab / person ready to approve the production gate
+- [ ] Pipeline execution view bookmarked: `Pipelines → demo-banking-api`
+- [ ] Account-level templates visible: `Account Settings → Templates`
+- [ ] Run #46 execution open as "what a successful run looks like"
+
+---
+
+## Scenario 1 — Day in the Life: Shipping a Feature
+
+**Story:** A developer wants to add per-account transaction history to the banking API. They use Claude to write the code and get it to production — without touching the Harness UI once.
+
+### Step 1 — Give Claude the feature request
+
+Type in the Claude terminal:
+
+```
+Add a GET /accounts/<account_id>/transactions endpoint to the banking API.
+It should return only transactions where that account is either the sender
+or receiver. Add a test for it. Then commit and push to main.
+```
+
+**What Claude does:**
+- Reads `app/main.py` and `tests/test_api.py` to understand the existing patterns
+- Adds the endpoint after the existing `/accounts/<account_id>/balance` route:
+  ```python
+  @app.route("/accounts/<account_id>/transactions", methods=["GET"])
+  @require_auth
+  def account_transactions(account_id):
+      if account_id not in ACCOUNTS:
+          return jsonify({"error": "Account not found"}), 404
+      txs = [t for t in TRANSACTIONS if t["from"] == account_id or t["to"] == account_id]
+      return jsonify({"account_id": account_id, "transactions": txs, "count": len(txs)}), 200
+  ```
+- Adds a test covering the 200 and 404 cases
+- Commits: `git commit -m "feat: add per-account transaction history endpoint"`
+- Pushes to main
+
+**Talking point:** *"The developer described what they wanted in plain English. Claude read the existing code, matched the patterns, wrote the test, and pushed — all without the developer opening a file."*
+
+---
+
+### Step 2 — Trigger the pipeline
+
+Still in Claude:
+
+```
+Trigger the demo-banking-api pipeline on the main branch and watch it for me.
+```
+
+**What Claude does:**
+- Calls `harness_execute` on `demo_banking_api` with `branch: main`
+- Confirms: *"Pipeline run #47 started. Monitoring..."*
+
+**What to show in Harness UI:**
+- Switch to the execution view — four stages appear: Build and Test, Deploy to Dev, Production Approval, Deploy to Production
+- All grey/pending except Build and Test which turns blue/running
+
+**Talking point:** *"One sentence. The pipeline is running. The developer doesn't know or care what's in it — and that's the point."*
+
+---
+
+### Step 3 — The guardrails run automatically (~3 minutes)
+
+While the CI stage runs, narrate what's happening under the hood (visible in Harness execution logs):
+
+| Step | What it does | Why it matters |
+|------|-------------|----------------|
+| Run Unit Tests | pytest with JUnit report | Catches regressions |
+| Claude Code Coverage Check | Claude evaluates coverage %, writes a verdict | AI quality gate — not just a number |
+| Build and Push to HAR | Docker build → `banking-api/demo-banking-api:47` | Immutable artifact |
+| HarnessSCA | Container vulnerability scan | Flags CVEs before they reach prod |
+| Generate SBOM | Syft generates software bill of materials, cosign attests it | Audit trail, supply chain compliance |
+
+**The money moment — show the coverage check logs:**
+
+```
+=== Claude Code Coverage Check ===
+Coverage: 87.3% (54/62 lines)
+
+The demo-banking-api project maintains strong test coverage at 87.3%, 
+comfortably exceeding the 80% threshold. The new account transaction 
+endpoint is fully covered by the added test cases.
+
+Verdict: PASS
+```
+
+**Talking point:** *"That's Claude — running inside the pipeline — reading the coverage report and writing a plain-English assessment. Not just a red/green number, but context a developer actually understands."*
+
+---
+
+### Step 4 — Dev deployment succeeds
+
+Build and Test goes green. Deploy to Dev starts automatically.
+
+**In Harness UI:** Show the CD stage — service `demo-banking-api`, artifact tag `47`, deploying to `dev_k8s` in the `banking-dev` namespace.
+
+Ask Claude:
+
+```
+What's the current status of the pipeline?
+```
+
+Claude responds with the stage summary: Build ✅, Dev Deploy ✅, Approval ⏳
+
+**Talking point:** *"The developer can ask Claude for a status update at any time — they don't need to watch a dashboard."*
+
+---
+
+### Step 5 — The production approval gate
+
+Pipeline hits the Production Approval stage and pauses.
+
+**What Claude reports:**
+
+```
+The pipeline has passed dev deployment and is now waiting for production approval.
+
+Build #47 is pending sign-off:
+- Service: demo-banking-api  
+- Artifact: pkg.harness.io/.../demo-banking-api:47
+- Requires: a different user to approve (pipeline executor restriction enforced by OPA)
+- Requires: a change ticket number
+
+The pipeline cannot proceed until someone else approves.
+```
+
+**Switch to Harness UI** — show the approval gate. A second person (or second browser tab) opens the approval, enters a change ticket (e.g. `CHG-2024-001`), and clicks Approve.
+
+**Talking point:** *"Two things just happened automatically — OPA blocked the developer from approving their own deployment, and the change ticket field was required. Neither of those are config. They're policies, enforced by the template, for every service that uses it."*
+
+---
+
+### Step 6 — Production deployment
+
+Approval granted → Deploy to Production runs → succeeds.
+
+Ask Claude:
+
+```
+What image is now running in production?
+```
+
+Claude: *"Image `pkg.harness.io/.../demo-banking-api:47` is deployed to `banking-prod`. Build #47, pushed from commit `feat: add per-account transaction history endpoint`."*
+
+**Close the loop:** *"From a one-sentence feature request to production — unit tested, security scanned, SBOM attested, human approved — in under 10 minutes. The developer wrote zero pipeline config."*
+
+---
+
+## Scenario 2 — New Service Onboarding from Scratch
+
+**Story:** A team wants to ship a brand new microservice — an FX Rates API that the banking app will call for currency conversion. They use Claude to build the service AND wire it into Harness using the existing account-level templates. Every guardrail from Scenario 1 applies automatically.
+
+**Why this matters:** The templates aren't just for the banking API. They're platform-wide guardrails. Any team, any service, same governance — with zero pipeline-writing required.
+
+---
+
+### Step 1 — Ask Claude to scaffold the new service
+
+In a new working directory or tell Claude:
+
+```
+Create a new Python Flask microservice called fx-rates-api. It should have:
+- GET /rates — returns mock AUD/USD, AUD/EUR, AUD/GBP exchange rates
+- GET /rates/<currency> — returns rate for a specific currency pair  
+- GET /health — standard health check
+- A Dockerfile
+- k8s/base/deployment.yaml and k8s/base/values.yaml (same pattern as demo-banking-api)
+- pytest tests with >80% coverage
+- requirements.txt (use Flask 3.0.0 and no vulnerable packages)
+```
+
+**What Claude does:**
+- Creates `app/main.py`, `tests/test_api.py`, `Dockerfile`, `requirements.txt`
+- Creates `k8s/base/deployment.yaml` using `{{.Values.image}}` (same bridge pattern as demo-banking-api)
+- Creates `k8s/base/values.yaml` with `image: <+artifact.image>`
+- Writes tests covering all endpoints
+
+**Talking point:** *"A complete, deployable microservice in about 30 seconds. Note the k8s manifests already use the values.yaml bridge pattern — Claude knows this pattern from the existing service."*
+
+---
+
+### Step 2 — Create the Harness Code repo and push
+
+```
+Create a new Harness Code repo called fx-rates-api and push this code to it.
+```
+
+**What Claude does:**
+- Calls `harness_create` for a `repository` resource named `fx-rates-api`
+- Initialises git, adds remote, pushes
+
+**Show in Harness UI:** Navigate to Code → Repositories → `fx-rates-api` — code is there.
+
+---
+
+### Step 3 — Create the HAR registry entry
+
+```
+Create a Harness Artifact Registry for the fx-rates-api service so we can push Docker images to it.
+```
+
+**What Claude does:**
+- Calls `harness_create` for a `registry` named `fx-rates` (VIRTUAL type)
+
+**Talking point:** *"Every service gets its own registry namespace. Images are immutable, tagged by pipeline run number."*
+
+---
+
+### Step 4 — Create the Harness Service
+
+```
+Create a Harness service called fx-rates-api. It's a Kubernetes service. 
+The manifests are in the fx-rates-api Harness Code repo at k8s/base/deployment.yaml, 
+with values.yaml in the same folder. The artifact is a HAR image from the fx-rates registry, 
+image path fx-rates-api.
+```
+
+**What Claude does:**
+- Reads the existing `demo_banking_api` service YAML as a reference
+- Creates a new service with:
+  - K8sManifest pointing to `fx-rates-api` repo
+  - Values manifest pointing to `k8s/base/values.yaml`
+  - HAR artifact source for `fx-rates/fx-rates-api`
+
+**Talking point:** *"Claude used the existing service as a pattern. The developer didn't write any YAML."*
+
+---
+
+### Step 5 — Create the pipeline using account templates
+
+```
+Create a Harness pipeline called fx-rates-api that uses the account-level CI/CD templates.
+For CI: use account.ci_build_test with serviceRepo=fx-rates-api and registryRef=fx-rates.
+For CD: deploy to dev first (use the dev environment and dev_k8s infrastructure, namespace=fx-rates-dev),
+then a production approval gate, then deploy to production (prod_k8s, namespace=fx-rates-prod).
+Tag the artifact with the pipeline sequence ID.
+```
+
+**What Claude does:**
+- Calls `harness_create` for a new pipeline
+- Wires in `account.ci_build_test`, `account.cd_k8s_rolling`, `account.production_gate` with the correct `templateInputs`
+- Sets `<+pipeline.sequenceId>` as the artifact tag throughout
+
+**Show in Harness UI:** Open the new pipeline — four stages, identical structure to demo-banking-api.
+
+**Talking point:** *"Look at this pipeline. It's structurally identical to the banking API pipeline — because it uses the same account-level templates. The fx-rates team automatically gets unit tests, Claude coverage check, STO scanning, SBOM attestation, and the production approval gate. They didn't ask for any of it. It came with the template."*
+
+---
+
+### Step 6 — Run the pipeline
+
+```
+Run the fx-rates-api pipeline on main and monitor it.
+```
+
+Pipeline executes end-to-end — same flow as Scenario 1. Show it reaching the approval gate.
+
+**Closing talking point:**
+
+*"Two services. Two teams. Zero pipeline YAML written by either developer. Same security posture, same governance, same audit trail — because the templates encode your organisation's standards. That's the platform team's job done once, applied everywhere."*
+
+---
+
+## Key Talking Points (across both scenarios)
+
+| What the audience sees | What to say |
+|------------------------|-------------|
+| Claude triggers the pipeline | "The developer's interface is a conversation. The platform is the implementation." |
+| Claude Code coverage check in logs | "AI isn't just writing the code — it's reviewing it too, with context, not just a number." |
+| OPA blocks self-approval | "Governance isn't a checkbox. It's enforced at the platform layer, for every run, without any developer configuration." |
+| New pipeline uses same templates | "One set of guardrails. Every service. The platform team wrote it once." |
+| SBOM with cosign attestation | "You have a signed, auditable software bill of materials for every image that reaches production." |
+| `<+pipeline.sequenceId>` as tag | "Every build is traceable. You can always answer: what exact code is running in production right now?" |
+
+---
+
+## Failure Scenarios (optional, for deeper demos)
+
+### CVE Block
+Before running: add `cryptography==38.0.0` to `requirements.txt` (known critical CVE).
+- STO scan flags it
+- OPA `image_security_policy` blocks the pipeline run
+- Claude reports: *"Pipeline blocked — critical CVE in cryptography package. Upgrade to >=42.0.5."*
+- Fix the version, re-run, succeeds
+
+### Coverage Drop
+Before running: delete the new test.
+- Claude Code coverage check drops below 80%
+- Claude writes: *"Coverage is 71.2% — below the 80% threshold. FAIL."*
+- Step exits 1, pipeline fails at CI
+- Add the test back, re-run
+
+### Change Window Violation (bonus)
+- OPA `change_window_policy` warns if deployment is outside Mon-Fri 08:00-17:00 AEST
+- Demonstrate by running outside hours — warning appears on the approval gate message
+
+---
+
+## Reset Between Demos
+
+```
+# In Claude terminal — to clean up after Scenario 1 before running Scenario 2:
+Revert the account transaction endpoint commit and push to main.
+```
+
+For Scenario 2 cleanup (if repeating):
+- Delete `fx-rates-api` pipeline, service, registry, and repo via Claude:
+  ```
+  Delete the fx-rates-api pipeline, service, and registry from Harness.
+  ```
