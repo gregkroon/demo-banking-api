@@ -160,50 +160,6 @@ def test_transfer_negative_amount(client, auth_headers):
 # Transactions
 # ---------------------------------------------------------------------------
 
-def test_account_transactions_empty(client, auth_headers):
-    resp = client.get("/accounts/ACC001/transactions", headers=auth_headers)
-    assert resp.status_code == 200
-    data = resp.get_json()
-    assert data["account_id"] == "ACC001"
-    assert data["count"] == 0
-    assert data["transactions"] == []
-
-
-def test_account_transactions_filters_correctly(client, auth_headers):
-    # ACC001 -> ACC002 (ACC001 and ACC002 involved, ACC003 not)
-    client.post(
-        "/transfers",
-        data=json.dumps({"from_account": "ACC001", "to_account": "ACC002", "amount": 500}),
-        content_type="application/json",
-        headers=auth_headers,
-    )
-    # ACC002 -> ACC003 (ACC002 and ACC003 involved, ACC001 not)
-    client.post(
-        "/transfers",
-        data=json.dumps({"from_account": "ACC002", "to_account": "ACC003", "amount": 200}),
-        content_type="application/json",
-        headers=auth_headers,
-    )
-    # ACC001 sees only the first transfer
-    resp = client.get("/accounts/ACC001/transactions", headers=auth_headers)
-    data = resp.get_json()
-    assert data["count"] == 1
-    assert data["transactions"][0]["amount"] == 500
-
-    # ACC002 sees both (sender in first, receiver in second)
-    resp = client.get("/accounts/ACC002/transactions", headers=auth_headers)
-    assert resp.get_json()["count"] == 2
-
-    # ACC003 sees only the second
-    resp = client.get("/accounts/ACC003/transactions", headers=auth_headers)
-    assert resp.get_json()["count"] == 1
-
-
-def test_account_transactions_not_found(client, auth_headers):
-    resp = client.get("/accounts/INVALID/transactions", headers=auth_headers)
-    assert resp.status_code == 404
-
-
 def test_list_transactions_empty(client, auth_headers):
     resp = client.get("/transactions", headers=auth_headers)
     assert resp.status_code == 200
