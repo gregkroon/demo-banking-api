@@ -13,7 +13,9 @@
 - [ ] Second browser tab / person ready to approve the production gate
 - [ ] Pipeline execution view bookmarked: `Pipelines → demo-banking-api`
 - [ ] Account-level templates visible: `Account Settings → Templates`
-- [ ] Run #46 execution open as "what a successful run looks like"
+- [ ] Run #52 execution open as "what a successful run looks like"
+- [ ] Transaction endpoint reverted and pushed to main (see Reset section below)
+- [ ] K8s namespaces `banking-dev` and `banking-prod` exist with `harness-registry-secret` (see Cluster Bootstrap below)
 
 ---
 
@@ -61,7 +63,7 @@ Trigger the demo-banking-api pipeline on the main branch and watch it for me.
 
 **What Claude does:**
 - Calls `harness_execute` on `demo_banking_api` with `branch: main`
-- Confirms: *"Pipeline run #47 started. Monitoring..."*
+- Confirms: *"Pipeline run #N started. Monitoring..."*
 
 **What to show in Harness UI:**
 - Switch to the execution view — four stages appear: Build and Test, Deploy to Dev, Production Approval, Deploy to Production
@@ -79,7 +81,7 @@ While the CI stage runs, narrate what's happening under the hood (visible in Har
 |------|-------------|----------------|
 | Run Unit Tests | pytest with JUnit report | Catches regressions |
 | Claude Code Coverage Check | Claude evaluates coverage %, writes a verdict | AI quality gate — not just a number |
-| Build and Push to HAR | Docker build → `banking-api/demo-banking-api:47` | Immutable artifact |
+| Build and Push to HAR | Docker build → `banking-api/demo-banking-api:<N>` | Immutable artifact |
 | HarnessSCA | Container vulnerability scan | Flags CVEs before they reach prod |
 | Generate SBOM | Syft generates software bill of materials, cosign attests it | Audit trail, supply chain compliance |
 
@@ -104,7 +106,7 @@ Verdict: PASS
 
 Build and Test goes green. Deploy to Dev starts automatically.
 
-**In Harness UI:** Show the CD stage — service `demo-banking-api`, artifact tag `47`, deploying to `dev_k8s` in the `banking-dev` namespace.
+**In Harness UI:** Show the CD stage — service `demo-banking-api`, artifact tag `<N>`, deploying to `dev_k8s` in the `banking-dev` namespace.
 
 Ask Claude:
 
@@ -127,9 +129,9 @@ Pipeline hits the Production Approval stage and pauses.
 ```
 The pipeline has passed dev deployment and is now waiting for production approval.
 
-Build #47 is pending sign-off:
+Build #<N> is pending sign-off:
 - Service: demo-banking-api  
-- Artifact: pkg.harness.io/.../demo-banking-api:47
+- Artifact: pkg.harness.io/.../demo-banking-api:<N>
 - Requires: a different user to approve (pipeline executor restriction enforced by OPA)
 - Requires: a change ticket number
 
@@ -152,93 +154,40 @@ Ask Claude:
 What image is now running in production?
 ```
 
-Claude: *"Image `pkg.harness.io/.../demo-banking-api:47` is deployed to `banking-prod`. Build #47, pushed from commit `feat: add per-account transaction history endpoint`."*
+Claude: *"Image `pkg.harness.io/.../demo-banking-api:<N>` is deployed to `banking-prod`. Build #<N>, pushed from commit `feat: add per-account transaction history endpoint`."*
 
 **Close the loop:** *"From a one-sentence feature request to production — unit tested, security scanned, SBOM attested, human approved — in under 10 minutes. The developer wrote zero pipeline config."*
 
 ---
 
-## Scenario 2 — New Service Onboarding from Scratch
+## Scenario 2 — New Service Onboarding with Account Templates
 
-**Story:** A team wants to ship a brand new microservice — an FX Rates API that the banking app will call for currency conversion. They use Claude to build the service AND wire it into Harness using the existing account-level templates. Every guardrail from Scenario 1 applies automatically.
+**Story:** A new team has already built their microservice — an FX Rates API — and pushed it to a Harness Code repo. The code is there, the Harness service and artifact registry are pre-configured. All they need is a pipeline. They ask Claude to wire it up using the account-level templates. Every guardrail from Scenario 1 applies automatically — without the team knowing or caring what's in those templates.
 
 **Why this matters:** The templates aren't just for the banking API. They're platform-wide guardrails. Any team, any service, same governance — with zero pipeline-writing required.
 
----
-
-### Step 1 — Ask Claude to scaffold the new service
-
-In a new working directory or tell Claude:
-
-```
-Create a new Python Flask microservice called fx-rates-api. It should have:
-- GET /rates — returns mock AUD/USD, AUD/EUR, AUD/GBP exchange rates
-- GET /rates/<currency> — returns rate for a specific currency pair  
-- GET /health — standard health check
-- A Dockerfile
-- k8s/base/deployment.yaml and k8s/base/values.yaml (same pattern as demo-banking-api)
-- pytest tests with >80% coverage
-- requirements.txt (use Flask 3.0.0 and no vulnerable packages)
-```
-
-**What Claude does:**
-- Creates `app/main.py`, `tests/test_api.py`, `Dockerfile`, `requirements.txt`
-- Creates `k8s/base/deployment.yaml` using `{{.Values.image}}` (same bridge pattern as demo-banking-api)
-- Creates `k8s/base/values.yaml` with `image: <+artifact.image>`
-- Writes tests covering all endpoints
-
-**Talking point:** *"A complete, deployable microservice in about 30 seconds. Note the k8s manifests already use the values.yaml bridge pattern — Claude knows this pattern from the existing service."*
+**Pre-setup (before the demo):**
+- Harness Code repo `fx-rates-api` — code already pushed (Flask app, Dockerfile, k8s manifests, tests)
+- HAR registry `fx-rates` — already created
+- Harness service `fx-rates-api` — already configured (K8sManifest + HAR artifact source)
+- K8s namespaces `fx-rates-dev` and `fx-rates-prod` pre-created with `harness-registry-secret`
 
 ---
 
-### Step 2 — Create the Harness Code repo and push
+### Step 1 — Show the team what already exists
 
-```
-Create a new Harness Code repo called fx-rates-api and push this code to it.
-```
+In Harness UI, briefly show:
+- **Code** → `fx-rates-api` repo — the code is there
+- **Services** → `fx-rates-api` — service defined, artifact source wired
+- **Account Templates** — `ci_build_test`, `cd_k8s_rolling`, `production_gate`
 
-**What Claude does:**
-- Calls `harness_create` for a `repository` resource named `fx-rates-api`
-- Initialises git, adds remote, pushes
-
-**Show in Harness UI:** Navigate to Code → Repositories → `fx-rates-api` — code is there.
+**Talking point:** *"The team built the service. The platform team has already defined the standards as templates. The only missing piece is a pipeline — and that's what we're going to create now, in one sentence."*
 
 ---
 
-### Step 3 — Create the HAR registry entry
+### Step 2 — Ask Claude to create the pipeline
 
-```
-Create a Harness Artifact Registry for the fx-rates-api service so we can push Docker images to it.
-```
-
-**What Claude does:**
-- Calls `harness_create` for a `registry` named `fx-rates` (VIRTUAL type)
-
-**Talking point:** *"Every service gets its own registry namespace. Images are immutable, tagged by pipeline run number."*
-
----
-
-### Step 4 — Create the Harness Service
-
-```
-Create a Harness service called fx-rates-api. It's a Kubernetes service. 
-The manifests are in the fx-rates-api Harness Code repo at k8s/base/deployment.yaml, 
-with values.yaml in the same folder. The artifact is a HAR image from the fx-rates registry, 
-image path fx-rates-api.
-```
-
-**What Claude does:**
-- Reads the existing `demo_banking_api` service YAML as a reference
-- Creates a new service with:
-  - K8sManifest pointing to `fx-rates-api` repo
-  - Values manifest pointing to `k8s/base/values.yaml`
-  - HAR artifact source for `fx-rates/fx-rates-api`
-
-**Talking point:** *"Claude used the existing service as a pattern. The developer didn't write any YAML."*
-
----
-
-### Step 5 — Create the pipeline using account templates
+In the Claude terminal:
 
 ```
 Create a Harness pipeline called fx-rates-api that uses the account-level CI/CD templates.
@@ -252,6 +201,7 @@ Tag the artifact with the pipeline sequence ID.
 - Calls `harness_create` for a new pipeline
 - Wires in `account.ci_build_test`, `account.cd_k8s_rolling`, `account.production_gate` with the correct `templateInputs`
 - Sets `<+pipeline.sequenceId>` as the artifact tag throughout
+- Confirms: *"Pipeline fx-rates-api created — 4 stages using account-level templates."*
 
 **Show in Harness UI:** Open the new pipeline — four stages, identical structure to demo-banking-api.
 
@@ -259,13 +209,25 @@ Tag the artifact with the pipeline sequence ID.
 
 ---
 
-### Step 6 — Run the pipeline
+### Step 3 — Run the pipeline
 
 ```
 Run the fx-rates-api pipeline on main and monitor it.
 ```
 
+**What Claude does:**
+- Calls `harness_execute` on `fx_rates_api` with `branch: main`
+- Confirms: *"Pipeline run #1 started. Monitoring..."*
+
 Pipeline executes end-to-end — same flow as Scenario 1. Show it reaching the approval gate.
+
+**Talking point:** *"Same four stages. Same security gates. Same approval requirement. The fx-rates team got all of this for free — by using the template."*
+
+---
+
+### Step 4 — The approval gate (same as Scenario 1)
+
+Pipeline pauses at Production Approval. A second person approves in the Harness UI, enters a change ticket, clicks Approve.
 
 **Closing talking point:**
 
@@ -310,13 +272,41 @@ Before running: delete the new test.
 
 ## Reset Between Demos
 
+**Scenario 1 reset** — revert the transaction endpoint so the "day in the life" story works again:
 ```
-# In Claude terminal — to clean up after Scenario 1 before running Scenario 2:
 Revert the account transaction endpoint commit and push to main.
 ```
 
-For Scenario 2 cleanup (if repeating):
-- Delete `fx-rates-api` pipeline, service, registry, and repo via Claude:
-  ```
-  Delete the fx-rates-api pipeline, service, and registry from Harness.
-  ```
+**Scenario 2 reset** — delete only the pipeline (leave service, registry, and repo in place):
+```
+Delete the fx-rates-api pipeline from Harness.
+```
+
+---
+
+## Cluster Bootstrap (one-time, or after a cluster reset)
+
+Harness K8s rolling deploy creates a release-tracking ConfigMap in the target namespace **before** applying any manifests — the namespace must pre-exist. Both namespaces also need `harness-registry-secret` to pull images from `pkg.harness.io`.
+
+Run these once after a fresh cluster or namespace wipe:
+
+```bash
+# Create namespaces
+kubectl create namespace banking-dev
+kubectl create namespace banking-prod
+
+# Copy the image pull secret into both namespaces
+# (Harness injects it into banking-dev on first deploy; copy from there to prod)
+kubectl get secret harness-registry-secret -n banking-dev -o json \
+  | python3 -c "
+import sys, json, base64
+d = json.load(sys.stdin)
+print(base64.b64decode(d['data']['.dockerconfigjson']).decode())
+" > /tmp/docker-config.json
+
+kubectl create secret docker-registry harness-registry-secret \
+  -n banking-prod \
+  --from-file=.dockerconfigjson=/tmp/docker-config.json
+```
+
+> **Note:** After a cluster reset, run Scenario 1 through dev deploy first so Harness injects `harness-registry-secret` into `banking-dev`, then copy it to `banking-prod` using the commands above before triggering production.
