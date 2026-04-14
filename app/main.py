@@ -102,6 +102,15 @@ def get_balance(account_id):
     }), 200
 
 
+@app.route("/accounts/<account_id>/transactions", methods=["GET"])
+@require_auth
+def account_transactions(account_id):
+    if account_id not in ACCOUNTS:
+        return jsonify({"error": "Account not found"}), 404
+    txs = [t for t in TRANSACTIONS if t["from"] == account_id or t["to"] == account_id]
+    return jsonify({"account_id": account_id, "transactions": txs, "count": len(txs)}), 200
+
+
 @app.route("/transfers", methods=["POST"])
 @require_auth
 def transfer():
