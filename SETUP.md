@@ -654,9 +654,30 @@ The demo uses the Harness MCP server to let Claude interact with Harness via nat
 npm install -g @anthropic-ai/claude-code
 ```
 
-### 4.2 Configure MCP in Claude Code settings
+### 4.2 Set environment variables
 
-Add to `~/.claude.json` (or via `claude mcp add`):
+Export these before starting Claude Code (add to `~/.zshrc` or `~/.bashrc` to persist):
+
+```bash
+export HARNESS_API_KEY='pat.xxxxxxx'       # Account Settings → API Keys → Generate new token
+export HARNESS_ACCOUNT_ID='<your-account-id>'
+export HARNESS_ORG='default'
+export HARNESS_PROJECT='claude'
+```
+
+Your account ID is visible in any Harness URL: `app.harness.io/ng/account/<ACCOUNT_ID>/...`
+
+### 4.3 Configure the Harness MCP server
+
+Register the MCP server with Claude Code:
+
+```bash
+claude mcp add harness -- npx -y @harness/mcp-server
+```
+
+This writes the server entry to `~/.claude.json`. The server picks up the `HARNESS_*` env vars from your shell automatically — no credentials stored in the config file.
+
+If you prefer to configure it manually, add to `~/.claude.json`:
 
 ```json
 {
@@ -665,24 +686,24 @@ Add to `~/.claude.json` (or via `claude mcp add`):
       "command": "npx",
       "args": ["-y", "@harness/mcp-server"],
       "env": {
-        "HARNESS_API_KEY": "<your-harness-api-key>",
+        "HARNESS_API_KEY": "pat.xxxxxxx",
         "HARNESS_ACCOUNT_ID": "<your-account-id>",
-        "HARNESS_DEFAULT_ORG": "default",
-        "HARNESS_DEFAULT_PROJECT": "claude"
+        "HARNESS_ORG": "default",
+        "HARNESS_PROJECT": "claude"
       }
     }
   }
 }
 ```
 
-Generate a Harness API key at Account Settings → API Keys.
-
-### 4.3 Start Claude Code
+### 4.4 Start Claude Code
 
 ```bash
 cd /path/to/demo-banking-api
 claude
 ```
+
+Verify the MCP is connected — Claude should respond to "What pipelines exist in my Harness project?" with a list of pipelines from the `claude` project.
 
 ---
 
