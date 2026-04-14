@@ -8,10 +8,14 @@ This guide covers everything needed to run the Harness + Claude Code demo in a f
 
 The demo uses two Harness projects and two services:
 
-| Service | Scenario | Harness Code Repo | HAR Registry scope |
-|---------|----------|-------------------|--------------------|
-| `demo-banking-api` | Scenario 1 — Day in the Life | `demo-banking-api` | Project-level (`banking-api`) |
-| `fx-rates-api` | Scenario 2 — New Service Onboarding | `fx-rates-api` | **Account-level** (`fx-rates`) |
+**Architecture principle:**
+- **Account level:** OPA policies, policy sets, Stage templates, shared secrets, K8s connector
+- **Project level (`claude`):** code repos, HAR registries, services, environments, infrastructure, pipelines
+
+| Service | Scenario | Harness Code Repo | HAR Registry |
+|---------|----------|-------------------|--------------|
+| `demo-banking-api` | Scenario 1 — Day in the Life | `demo-banking-api` | `banking-api` (project) |
+| `fx-rates-api` | Scenario 2 — New Service Onboarding | `fx-rates-api` | `fx-rates` (project) |
 
 ---
 
@@ -46,17 +50,7 @@ Verify these account-level connectors exist (Account Settings → Connectors):
 
 The `account.k8s` connector must have cluster-admin or sufficient RBAC to create/update Deployments, Services, ConfigMaps, and Namespaces.
 
-### 1.3 Harness Artifact Registry — `fx-rates` (Account level)
-
-Navigate to **Account Settings → Artifact Registries → New Registry**:
-
-- **Name:** `fx-rates`
-- **Type:** Docker
-- **Scope:** Account
-
-> This must be account-level. The `fx-rates-api` service references it as `account.fx-rates`. A project-level registry will cause a 400 error at the CD service step.
-
-### 1.4 OPA Policies
+### 1.3 OPA Policies
 
 Create four Rego policies at **Account** scope (Account Settings → Policies → Policies). Save each with real newlines — do not use `\n` escaped strings.
 
@@ -126,7 +120,7 @@ has_approval_stage {
 }
 ```
 
-### 1.5 OPA Policy Sets
+### 1.4 OPA Policy Sets
 
 Create two policy sets at Account scope (Account Settings → Policies → Policy Sets):
 
@@ -142,7 +136,7 @@ Create two policy sets at Account scope (Account Settings → Policies → Polic
 - **Event:** On Run
 - **Enforcement:** Enabled
 
-### 1.6 Account-Level Templates
+### 1.5 Account-Level Templates
 
 Create three Stage templates at **Account** scope (Account Settings → Templates → New Template → Stage). Each must be version `1.0`.
 
@@ -441,15 +435,16 @@ image: <+artifact.image>
 
 > **Why this two-file pattern?** Harness evaluates `<+artifact.image>` in `values.yaml` first (replacing it with the full registry URL), then applies it to `deployment.yaml` via Go templating. Putting `<+artifact.image>` directly in `deployment.yaml` does **not** work with Kustomize/K8sManifest — it won't be substituted.
 
-### 2.2 Harness Artifact Registry — `banking-api` (Project level)
+### 2.2 Harness Artifact Registries (Project level)
 
-Navigate to **Project → Artifact Registries → New Registry**:
+Create two Docker registries under the project (Project → Artifact Registries → New Registry):
 
-- **Name:** `banking-api`
-- **Type:** Docker
-- **Scope:** Project
+| Name | Identifier | Used by |
+|------|------------|---------|
+| `banking-api` | `banking-api` | `demo-banking-api` service |
+| `fx-rates` | `fx-rates` | `fx-rates-api` service |
 
-> The `banking-api` registry is project-level. The `fx-rates` registry (Section 1.3) is account-level. This difference matters: the `fx-rates-api` service must reference it as `registryRef: account.fx-rates`.
+Both are **project-scoped** — set Scope to Project when creating each one.
 
 ### 2.3 Environments
 
@@ -578,15 +573,13 @@ service:
             - identifier: harnessartifactregistry
               type: Har
               spec:
-                registryRef: account.fx-rates
+                registryRef: fx-rates
                 type: docker
                 spec:
                   imagePath: fx-rates-api
                   tag: <+input>
                   digest: ""
 ```
-
-> **`registryRef: account.fx-rates`** — the `account.` prefix is required because the `fx-rates` HAR registry is at account scope. Using `registryRef: fx-rates` (without the prefix) causes a 400 error at the CD service step because Harness looks for a project-level connector that doesn't exist.
 
 ### 2.6 Pipelines
 
@@ -722,7 +715,7 @@ Then recreate it with the one-sentence prompt in Section 2.6.
 | `claude --print` exits 1, fails CI | Anthropic API credits exhausted | Add `\|\| true` to the `claude --print` line in `ci_build_test` template |
 | HarnessSCA: "manifest unknown" pulling `:latest` | Build and Push only pushes sequenceId tag, not `latest` | Add `latest` to the `tags` list in the Build and Push step |
 | HarnessSCA scans wrong image tag | `detection: auto` always resolves to `latest` regardless of `image.tag` | Set `detection: manual` with `name: <+stage.variables.serviceRepo>` and `variant: <+pipeline.sequenceId>` |
-| CD service step: "Invalid format of YAML payload (400)" | `registryRef` in service definition doesn't match registry scope | Use `registryRef: account.fx-rates` for account-level HAR; `registryRef: banking-api` for project-level |
+| CD service step: "Invalid format of YAML payload (400)" | `registryRef` in service definition references a registry that doesn't exist at the expected scope | Ensure `registryRef` in the service YAML exactly matches the registry identifier at project scope (e.g. `banking-api`, `fx-rates`) |
 | Template change has no effect on re-run | Retried executions use frozen YAML from original run | Always trigger a **fresh run** after changing a template, never use Retry |
 | K8s deploy fails: namespace not found | Harness tries to create release ConfigMap in non-existent namespace | Pre-create all namespaces before the first deploy (Section 3.1) |
 | Image pull fails in pod | `harness-registry-secret` missing in namespace | Copy secret from `banking-dev` after first successful dev deploy (Section 3.2) |
