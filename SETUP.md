@@ -79,7 +79,7 @@ warn[msg] {
 }
 
 any_ci_template(refs) {
-  refs[_] == "ci_build_test"
+  refs[_] == "account.ci_build_test"
 }
 ```
 
