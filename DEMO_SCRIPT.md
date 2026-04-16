@@ -191,7 +191,7 @@ In the Claude terminal:
 
 ```
 Create a Harness pipeline called fx-rates-api that uses the account-level CI/CD templates.
-For CI: use account.ci_build_test with serviceRepo=fx-rates-api and registryRef=fx-rates.
+For CI: use account.ci_build_test with serviceRepo=fx-rates-api and registryRef=fx-rates-api.
 For CD: deploy to dev first (use the dev environment and dev_k8s infrastructure, namespace=fx-rates-dev),
 then a production approval gate, then deploy to production (prod_k8s, namespace=fx-rates-prod).
 Tag the artifact with the pipeline sequence ID.
