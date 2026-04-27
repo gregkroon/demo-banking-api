@@ -146,5 +146,25 @@ def list_transactions():
     return jsonify({"transactions": TRANSACTIONS, "count": len(TRANSACTIONS)}), 200
 
 
+@app.route("/accounts/<account_id>/transactions", methods=["GET"])
+@require_auth
+def get_account_transactions(account_id):
+    # Check if account exists
+    if account_id not in ACCOUNTS:
+        return jsonify({"error": "Account not found"}), 404
+
+    # Filter transactions where account is either sender or receiver
+    account_txs = [
+        tx for tx in TRANSACTIONS
+        if tx["from"] == account_id or tx["to"] == account_id
+    ]
+
+    return jsonify({
+        "account_id": account_id,
+        "transactions": account_txs,
+        "count": len(account_txs)
+    }), 200
+
+
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=8080, debug=False)
