@@ -69,7 +69,7 @@ Similar structure using the same account-level templates with different service/
 
 **Services**:
 - `demo_banking_api` - Kubernetes service with HAR artifact source
-- `fx_rates_api` - Similar configuration for FX rates service
+- `fx_rates_api` - service identifier is fxratesapi - Similar configuration for FX rates service
 
 **Environments**:
 - `dev` - Development environment
