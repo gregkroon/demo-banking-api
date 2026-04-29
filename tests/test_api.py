@@ -175,3 +175,82 @@ def test_list_transactions_after_transfer(client, auth_headers):
     )
     resp = client.get("/transactions", headers=auth_headers)
     assert resp.get_json()["count"] == 1
+
+
+# ---------------------------------------------------------------------------
+# Account Transactions
+# ---------------------------------------------------------------------------
+
+def test_get_account_transactions_empty(client, auth_headers):
+    resp = client.get("/accounts/ACC001/transactions", headers=auth_headers)
+    assert resp.status_code == 200
+    data = resp.get_json()
+    assert data["account_id"] == "ACC001"
+    assert data["count"] == 0
+    assert data["transactions"] == []
+
+
+def test_get_account_transactions_as_sender(client, auth_headers):
+    # Create a transfer where ACC001 is the sender
+    client.post(
+        "/transfers",
+        data=json.dumps({"from_account": "ACC001", "to_account": "ACC002", "amount": 500}),
+        content_type="application/json",
+        headers=auth_headers,
+    )
+    resp = client.get("/accounts/ACC001/transactions", headers=auth_headers)
+    assert resp.status_code == 200
+    data = resp.get_json()
+    assert data["count"] == 1
+    assert data["transactions"][0]["from"] == "ACC001"
+    assert data["transactions"][0]["to"] == "ACC002"
+    assert data["transactions"][0]["amount"] == 500
+
+
+def test_get_account_transactions_as_receiver(client, auth_headers):
+    # Create a transfer where ACC002 is the receiver
+    client.post(
+        "/transfers",
+        data=json.dumps({"from_account": "ACC001", "to_account": "ACC002", "amount": 500}),
+        content_type="application/json",
+        headers=auth_headers,
+    )
+    resp = client.get("/accounts/ACC002/transactions", headers=auth_headers)
+    assert resp.status_code == 200
+    data = resp.get_json()
+    assert data["count"] == 1
+    assert data["transactions"][0]["from"] == "ACC001"
+    assert data["transactions"][0]["to"] == "ACC002"
+
+
+def test_get_account_transactions_multiple(client, auth_headers):
+    # Create multiple transfers involving ACC001
+    client.post(
+        "/transfers",
+        data=json.dumps({"from_account": "ACC001", "to_account": "ACC002", "amount": 500}),
+        content_type="application/json",
+        headers=auth_headers,
+    )
+    client.post(
+        "/transfers",
+        data=json.dumps({"from_account": "ACC003", "to_account": "ACC001", "amount": 200}),
+        content_type="application/json",
+        headers=auth_headers,
+    )
+    client.post(
+        "/transfers",
+        data=json.dumps({"from_account": "ACC002", "to_account": "ACC003", "amount": 300}),
+        content_type="application/json",
+        headers=auth_headers,
+    )
+
+    resp = client.get("/accounts/ACC001/transactions", headers=auth_headers)
+    assert resp.status_code == 200
+    data = resp.get_json()
+    # ACC001 should have 2 transactions (1 as sender, 1 as receiver)
+    assert data["count"] == 2
+
+
+def test_get_account_transactions_not_found(client, auth_headers):
+    resp = client.get("/accounts/INVALID/transactions", headers=auth_headers)
+    assert resp.status_code == 404
