@@ -51,9 +51,7 @@ This is a demo Flask-based banking API showcasing Harness CI/CD integration with
 
 Similar structure using the same account-level templates with different service/registry references.
 
-## Account-Level Templates
-
-Located at: `claude` project (referenced as `account.*`)
+## Project-Level Templates
 
 1. **ci_build_test** - CI Stage template
    - Variables: serviceRepo, registryRef
@@ -164,3 +162,4 @@ git push origin main
 - Authentication is simplified (any credentials work)
 - In-memory data storage (resets on restart)
 - NOT production-ready - for demonstration purposes only
+- use only MCP to create and execute entities
