@@ -168,8 +168,8 @@ Claude: *"Image `pkg.harness.io/.../demo-banking-api:<N>` is deployed to `bankin
 
 **Pre-setup (before the demo):**
 - Harness Code repo `fx-rates-api` — code already pushed (Flask app, Dockerfile, k8s manifests, tests)
-- HAR registry `fx-rates` — already created
-- Harness service `fx-rates-api` — already configured (K8sManifest + HAR artifact source)
+- HAR registry `fx-rates-api` — already created
+- Harness service `fxratesapi` — already configured (K8sManifest + HAR artifact source, identifier uses lowercase without separators)
 - K8s namespaces `fx-rates-dev` and `fx-rates-prod` pre-created with `harness-registry-secret`
 
 ---
@@ -178,10 +178,10 @@ Claude: *"Image `pkg.harness.io/.../demo-banking-api:<N>` is deployed to `bankin
 
 In Harness UI, briefly show:
 - **Code** → `fx-rates-api` repo — the code is there
-- **Services** → `fx-rates-api` — service defined, artifact source wired
-- **Account Templates** — `ci_build_test`, `cd_k8s_rolling`, `production_gate`
+- **Services** → `fxratesapi` — service defined (note: identifier is lowercase without separators), artifact source wired
+- **Account Templates** → `claude` project — `ci_build_test`, `cd_k8s_rolling`, `production_gate`
 
-**Talking point:** *"The team built the service. The platform team has already defined the standards as templates. The only missing piece is a pipeline — and that's what we're going to create now, in one sentence."*
+**Talking point:** *"The team built the service. The platform team has already defined the standards as templates at the account level. The only missing piece is a pipeline — and that's what we're going to create now, in one sentence."*
 
 ---
 
@@ -191,7 +191,7 @@ In the Claude terminal:
 
 ```
 Create a Harness pipeline called fx-rates-api that uses the account-level CI/CD templates.
-For CI: use account.ci_build_test with serviceRepo=fx-rates-api and registryRef=fx-rates-api.
+For CI: use ci_build_test with serviceRepo=fx-rates-api and registryRef=fx-rates-api.
 For CD: deploy to dev first (use the dev environment and dev_k8s infrastructure, namespace=fx-rates-dev),
 then a production approval gate, then deploy to production (prod_k8s, namespace=fx-rates-prod).
 Tag the artifact with the pipeline sequence ID.
@@ -199,13 +199,16 @@ Tag the artifact with the pipeline sequence ID.
 
 **What Claude does:**
 - Calls `harness_create` for a new pipeline
-- Wires in `account.ci_build_test`, `account.cd_k8s_rolling`, `account.production_gate` with the correct `templateInputs`
+- Wires in `ci_build_test`, `cd_k8s_rolling`, `production_gate` templates with the correct `templateInputs`
 - Sets `<+pipeline.sequenceId>` as the artifact tag throughout
+- **Important:** Uses `serviceRef: fxratesapi` (lowercase, no separators) to match the actual service identifier in Harness
 - Confirms: *"Pipeline fx-rates-api created — 4 stages using account-level templates."*
 
 **Show in Harness UI:** Open the new pipeline — four stages, identical structure to demo-banking-api.
 
 **Talking point:** *"Look at this pipeline. It's structurally identical to the banking API pipeline — because it uses the same account-level templates. The fx-rates team automatically gets unit tests, Claude coverage check, STO scanning, SBOM attestation, and the production approval gate. They didn't ask for any of it. It came with the template."*
+
+**Note on service naming:** Harness service identifiers use lowercase without separators (fx-rates-api → fxratesapi). If Claude encounters a "service not found" error, it will automatically correct the serviceRef and save this pattern to memory for future pipeline creation.
 
 ---
 
@@ -281,6 +284,23 @@ Revert the account transaction endpoint commit and push to main.
 ```
 Delete the fx-rates-api pipeline from Harness.
 ```
+
+---
+
+## Troubleshooting
+
+### Service Naming Convention
+
+**Issue:** Pipeline fails with "service with ref: [fx_rates_api] not found"
+
+**Cause:** Harness service identifiers in this account use lowercase without separators, which differs from pipeline identifiers (which use underscores) and repository names (which use hyphens).
+
+**Examples:**
+- Repository: `fx-rates-api` → Service: `fxratesapi`
+- Repository: `demo-banking-api` → Service: `demobankingapi`
+- Pipeline: `fx_rates_api` → Service: `fxratesapi`
+
+**Fix:** Update the pipeline's `serviceRef` field to use the lowercase, no-separator format. Claude will automatically detect this error and fix it, saving the pattern to memory.
 
 ---
 
