@@ -8,14 +8,28 @@
 
 ## Setup Checklist (before the demo)
 
-- [ ] Terminal open in `/mcp/demo` with Claude Code running (`claude`)
-- [ ] Harness UI open, logged in, on the `claude` project
-- [ ] Second browser tab / person ready to approve the production gate
-- [ ] Pipeline execution view bookmarked: `Pipelines → demo-banking-api`
-- [ ] Account-level templates visible: `Account Settings → Templates`
-- [ ] Run #52 execution open as "what a successful run looks like"
-- [ ] Transaction endpoint reverted and pushed to main (see Reset section below)
-- [ ] K8s namespaces `banking-dev` and `banking-prod` exist with `harness-registry-secret` (see Cluster Bootstrap below)
+create folder on laptop aidemo , change directory to it and do the following 
+
+
+git clone  https://git.harness.io/EeRjnXTnS4GrLG5VNNJZUw/default/apac_ai_demo/demo-banking-api.git
+git clone https://git.harness.io/EeRjnXTnS4GrLG5VNNJZUw/default/apac_ai_demo/fx-rates-api.git
+git clone https://git.harness.io/EeRjnXTnS4GrLG5VNNJZUw/default/apac_ai_demo/gosample.git
+
+
+
+claude setup 
+
+export HARNESS_API_KEY='pat.EeRjnXTnS4GrLG5VNNJZUw.69eb0264a4057c3f37c637a4.B3OdsHs7nLp5HO5DJ8Pu'
+export HARNESS_ACCOUNT_ID='EeRjnXTnS4GrLG5VNNJZUw'
+export HARNESS_ORG='default'
+export HARNESS_PROJECT='apac_ai_demo'
+
+
+add mcp 
+
+claude mcp add harness -- npx harness-mcp-v2
+
+run claude code in the terminal from root of aidemo
 
 ---
 
