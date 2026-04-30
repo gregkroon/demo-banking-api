@@ -175,3 +175,56 @@ def test_list_transactions_after_transfer(client, auth_headers):
     )
     resp = client.get("/transactions", headers=auth_headers)
     assert resp.get_json()["count"] == 1
+
+
+def test_get_account_transactions(client, auth_headers):
+    # Create several transactions
+    client.post(
+        "/transfers",
+        data=json.dumps({"from_account": "ACC001", "to_account": "ACC002", "amount": 500}),
+        content_type="application/json",
+        headers=auth_headers,
+    )
+    client.post(
+        "/transfers",
+        data=json.dumps({"from_account": "ACC002", "to_account": "ACC003", "amount": 200}),
+        content_type="application/json",
+        headers=auth_headers,
+    )
+    client.post(
+        "/transfers",
+        data=json.dumps({"from_account": "ACC003", "to_account": "ACC001", "amount": 100}),
+        content_type="application/json",
+        headers=auth_headers,
+    )
+
+    # Get transactions for ACC001 (should have 2: one as sender, one as receiver)
+    resp = client.get("/accounts/ACC001/transactions", headers=auth_headers)
+    assert resp.status_code == 200
+    data = resp.get_json()
+    assert data["count"] == 2
+    assert any(tx["from"] == "ACC001" for tx in data["transactions"])
+    assert any(tx["to"] == "ACC001" for tx in data["transactions"])
+
+    # Get transactions for ACC002 (should have 2: one as receiver, one as sender)
+    resp = client.get("/accounts/ACC002/transactions", headers=auth_headers)
+    assert resp.status_code == 200
+    data = resp.get_json()
+    assert data["count"] == 2
+
+    # Get transactions for ACC003 (should have 2: one as receiver, one as sender)
+    resp = client.get("/accounts/ACC003/transactions", headers=auth_headers)
+    assert resp.status_code == 200
+    data = resp.get_json()
+    assert data["count"] == 2
+
+
+def test_get_account_transactions_empty(client, auth_headers):
+    resp = client.get("/accounts/ACC001/transactions", headers=auth_headers)
+    assert resp.status_code == 200
+    assert resp.get_json()["count"] == 0
+
+
+def test_get_account_transactions_not_found(client, auth_headers):
+    resp = client.get("/accounts/INVALID/transactions", headers=auth_headers)
+    assert resp.status_code == 404
