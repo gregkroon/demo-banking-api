@@ -277,7 +277,7 @@ Before running: delete the new test.
 
 **Scenario 1 reset** — revert the transaction endpoint on the demo-banking-api repo so the "day in the life" story works again:
 ```
-Revert the account transaction endpoint commit and push to main.
+Revert the account transaction endpoint commit in the demo-banking-api and push to main.
 ```
 
 **Scenario 2 reset** — delete only the pipeline (leave service, registry, and repo in place):
