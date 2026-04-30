@@ -19,7 +19,7 @@ git clone https://git.harness.io/EeRjnXTnS4GrLG5VNNJZUw/default/apac_ai_demo/gos
 
 claude setup 
 
-export HARNESS_API_KEY='pat.EeRjnXTnS4GrLG5VNNJZUw.69eb0264a4057c3f37c637a4.B3OdsHs7nLp5HO5DJ8Pu'
+export HARNESS_API_KEY='pat.xxxxxxx'
 export HARNESS_ACCOUNT_ID='EeRjnXTnS4GrLG5VNNJZUw'
 export HARNESS_ORG='default'
 export HARNESS_PROJECT='apac_ai_demo'
