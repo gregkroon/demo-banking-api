@@ -8,6 +8,8 @@
 
 ## Setup Checklist (before the demo)
 
+### codebase
+
 create folder on laptop aidemo , change directory to it and do the following 
 
 
@@ -17,7 +19,7 @@ git clone https://git.harness.io/EeRjnXTnS4GrLG5VNNJZUw/default/apac_ai_demo/gos
 
 
 
-claude setup 
+### claude setup 
 
 export HARNESS_API_KEY='pat.xxxxxxx'
 export HARNESS_ACCOUNT_ID='EeRjnXTnS4GrLG5VNNJZUw'
@@ -25,9 +27,11 @@ export HARNESS_ORG='default'
 export HARNESS_PROJECT='apac_ai_demo'
 
 
-add mcp 
+### add mcp 
 
 claude mcp add harness -- npx harness-mcp-v2
+
+### run
 
 run claude code in the terminal from root of aidemo
 
