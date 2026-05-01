@@ -140,20 +140,6 @@ def transfer():
     return jsonify(tx), 201
 
 
-@app.route("/accounts/<account_id>/transactions", methods=["GET"])
-@require_auth
-def get_account_transactions(account_id):
-    account = ACCOUNTS.get(account_id)
-    if not account:
-        return jsonify({"error": "Account not found"}), 404
-
-    account_txs = [
-        tx for tx in TRANSACTIONS
-        if tx["from"] == account_id or tx["to"] == account_id
-    ]
-    return jsonify({"transactions": account_txs, "count": len(account_txs)}), 200
-
-
 @app.route("/transactions", methods=["GET"])
 @require_auth
 def list_transactions():
