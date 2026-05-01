@@ -67,6 +67,10 @@ Similar structure using the same account-level templates with different service/
 
 ## Harness Resources
 
+**Organization**: `default`
+**Project**: `apac_ai_demo` (identifier: `apac_ai_demo`)
+**Account ID**: `EeRjnXTnS4GrLG5VNNJZUw`
+
 **Services**:
 - `demo_banking_api` - Kubernetes service with HAR artifact source
 - `fx_rates_api` - service identifier is fxratesapi - Similar configuration for FX rates service
@@ -142,12 +146,25 @@ serviceInputs:
 
 ### Trigger Pipeline
 ```
-harness_execute(resource_type='pipeline', resource_id='demo_banking_api', action='run', inputs={'branch': 'main'})
+harness_execute(
+    resource_type='pipeline', 
+    resource_id='demo_banking_api',
+    org_id='default',
+    project_id='apac_ai_demo',
+    action='run', 
+    inputs={'branch': 'main'}
+)
 ```
 
 ### Monitor Execution
 ```
-harness_diagnose(resource_type='pipeline', resource_id='demo_banking_api', options={'execution_id': '<id>', 'include_visual': true})
+harness_diagnose(
+    resource_type='pipeline', 
+    resource_id='demo_banking_api',
+    org_id='default',
+    project_id='apac_ai_demo',
+    options={'execution_id': '<id>', 'include_visual': true}
+)
 ```
 
 ### Revert Code Changes
