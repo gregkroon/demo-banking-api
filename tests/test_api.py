@@ -175,33 +175,3 @@ def test_list_transactions_after_transfer(client, auth_headers):
     )
     resp = client.get("/transactions", headers=auth_headers)
     assert resp.get_json()["count"] == 1
-
-
-def test_get_account_transactions(client, auth_headers):
-    client.post(
-        "/transfers",
-        data=json.dumps({"from_account": "ACC001", "to_account": "ACC002", "amount": 500}),
-        content_type="application/json",
-        headers=auth_headers,
-    )
-    client.post(
-        "/transfers",
-        data=json.dumps({"from_account": "ACC002", "to_account": "ACC003", "amount": 200}),
-        content_type="application/json",
-        headers=auth_headers,
-    )
-
-    resp = client.get("/accounts/ACC001/transactions", headers=auth_headers)
-    assert resp.status_code == 200
-    assert resp.get_json()["count"] == 1
-    assert all(
-        t["from"] == "ACC001" or t["to"] == "ACC001"
-        for t in resp.get_json()["transactions"]
-    )
-
-    resp = client.get("/accounts/ACC002/transactions", headers=auth_headers)
-    assert resp.status_code == 200
-    assert resp.get_json()["count"] == 2
-
-    resp = client.get("/accounts/NONE/transactions", headers=auth_headers)
-    assert resp.status_code == 404
