@@ -291,39 +291,42 @@ Before running: delete the new test.
 
 ---
 
-## Scenario 3 — Release Readiness Assessment with AI
+## Scenario 3 — Release Readiness Assessment with Harness AI
 
-**Note:** Scenarios 3-7 demonstrate Harness platform capabilities accessed through Claude AI, but the primary focus is on Harness features rather than Claude Code development workflows.
+**Note:** Scenarios 3-7 demonstrate Harness platform AI capabilities directly in the Harness UI, separate from the Claude Code development workflows in Scenarios 1-2.
 
-**Story:** A release manager needs to decide whether a build is ready for production. Instead of manually checking multiple dashboards, they ask Claude to perform a comprehensive readiness assessment.
+**Story:** A release manager needs to decide whether a build is ready for production. Instead of manually checking multiple dashboards, they use Harness AIDA (AI Development Assistant) to perform a comprehensive readiness assessment.
 
-### Step 1 — Ask Claude for a release assessment
+### Step 1 — Use Harness AIDA for release assessment
 
-In the Claude terminal:
+In the Harness UI, open the pipeline execution and click the **AIDA** button:
 
+Ask AIDA:
 ```
 Review this release for production readiness. Check build status, tests, approvals, security scans, policy violations, deployment history, rollback readiness, change ticket quality, and observability coverage. Give a go/no-go recommendation.
 ```
 
-**What Claude does:**
-- Analyzes the latest pipeline execution across all stages
+**What Harness AIDA does:**
+- Analyzes the current pipeline execution across all stages
 - Reviews test results, coverage metrics, and STO findings
 - Checks approval history and change ticket details
 - Evaluates policy compliance (OPA evaluations)
 - Assesses SBOM completeness and attestation
-- Provides a structured go/no-go recommendation with reasoning
+- Provides a structured go/no-go recommendation with reasoning directly in the UI
 
-**Talking point:** *"This is AI as a release manager's co-pilot. Claude just reviewed 8 different aspects of production readiness — things that would normally require opening multiple tabs in Harness — and gave you a single recommendation with evidence."*
+**Talking point:** *"This is Harness AI as a release manager's co-pilot. AIDA just reviewed 8 different aspects of production readiness — things that would normally require opening multiple tabs — and gave you a single recommendation with evidence, all within the Harness platform."*
 
 ---
 
-## Scenario 4 — AI-Generated Pipeline from Scratch
+## Scenario 4 — AI-Generated Pipeline with Harness AIDA
 
-**Story:** A developer has a Go microservice in a Harness Code repo and needs a complete CI/CD pipeline. Instead of copying YAML or clicking through the UI, they describe the entire pipeline structure to Claude in plain English.
+**Story:** A developer has a Go microservice in a Harness Code repo and needs a complete CI/CD pipeline. Instead of copying YAML or clicking through the UI, they use Harness AIDA in the Pipeline Studio to generate the pipeline from a natural language description.
 
-### Step 1 — Create the pipeline with Claude
+### Step 1 — Create the pipeline with Harness AIDA
 
-In the Claude terminal:
+In the Harness UI, navigate to **Pipelines** → **Create New Pipeline** → **Use AI Assistant**
+
+Provide AIDA with the requirements:
 
 ```
 Create a Harness pipeline for org default and project apac_ai_demo with name and identifier gosampleapp. Add tag ai_generated: "true".
@@ -372,22 +375,22 @@ Stage 2 - CD Stage:
 - Failure strategy: StageRollback on all errors
 ```
 
-**What Claude does:**
-- Parses the structured requirements
+**What Harness AIDA does:**
+- Parses the natural language requirements
 - Generates complete pipeline YAML with proper Harness schema
 - Creates both CI and CD stages with correct step configuration
 - Sets up failure strategies and rollback logic
-- Confirms: *"Pipeline gosampleapp created with build and deploy stages."*
+- Displays the generated pipeline in the visual editor
 
-**Show in Harness UI:** Open the new pipeline — two stages with proper configuration, tagged with `ai_generated: true`.
+**Show in Harness UI:** Review the generated pipeline — two stages with proper configuration, tagged with `ai_generated: true`.
 
-**Talking point:** *"The developer described what they wanted. Claude translated it into 200+ lines of Harness YAML — with proper schema, failure strategies, and rollback logic. No docs, no templates, just conversation."*
+**Talking point:** *"The developer described what they wanted in plain English. Harness AIDA translated it into 200+ lines of pipeline YAML — with proper schema, failure strategies, and rollback logic. No docs, no templates, just natural language in the Pipeline Studio."*
 
 ---
 
 ### Step 2 — Enhance the pipeline with security and approvals
 
-Still in Claude:
+In the Pipeline Studio, use AIDA again to modify the pipeline:
 
 ```
 Modify the gosampleapp pipeline to add security scanning and an approval gate before deployment:
@@ -405,28 +408,24 @@ Add an Approval stage between the build and deploy stages:
 - Disable auto-reject
 ```
 
-**What Claude does:**
-- Reads the current pipeline
+**What Harness AIDA does:**
+- Reads the current pipeline configuration
 - Adds Semgrep step at the beginning of the build stage
 - Inserts a new Approval stage between build and deploy
 - Configures HarnessApproval with specified approver group and timeout
-- Updates the pipeline in Harness
+- Updates the visual pipeline editor with the changes
 
-**Talking point:** *"The pipeline just evolved. Security scanning and human approval gates were added with two sentences — no YAML editing, no reading docs about Semgrep configuration."*
+**Talking point:** *"The pipeline just evolved. Security scanning and human approval gates were added with a natural language request in the Harness UI — no YAML editing, no reading docs about Semgrep configuration."*
 
 ---
 
 ## Scenario 5 — Test Intelligence and PR-Based Security Scanning
 
-**Story:** Demonstrate Harness's intelligent testing and security features integrated with Claude.
+**Story:** Demonstrate Harness's intelligent testing and security features.
 
 ### Step 1 — Test Intelligence in action
 
-Show the existing e2e pipeline with Test Intelligence enabled:
-
-```
-Show me the test intelligence results from the latest e2e pipeline run.
-```
+In the Harness UI, open the e2e pipeline execution with Test Intelligence enabled.
 
 **What to show in Harness UI:**
 - Test Intelligence dashboard showing only changed tests running
@@ -439,11 +438,7 @@ Show me the test intelligence results from the latest e2e pipeline run.
 
 ### Step 2 — STO on Pull Requests
 
-Create a PR with a vulnerability, show STO catching it:
-
-```
-Create a pull request that adds a dependency with a known CVE.
-```
+In Harness Code, open a pull request that adds a dependency with a known vulnerability.
 
 **What to show in Harness UI:**
 - PR pipeline triggered automatically
@@ -461,9 +456,7 @@ Create a pull request that adds a dependency with a known CVE.
 
 ### Step 1 — Show CV configuration
 
-```
-Show me the continuous verification configuration for the banking API production deployment.
-```
+In the Harness UI, navigate to the banking API production deployment and open the Continuous Verification configuration.
 
 **What to show in Harness UI:**
 - CV configured with Prometheus/Datadog metrics
@@ -493,9 +486,9 @@ Deploy a version that intentionally causes issues (simulated or pre-staged).
 
 ---
 
-## Scenario 7 — OPA Policy AI Assistant
+## Scenario 7 — OPA Policy AI Assistant with Harness AIDA
 
-**Story:** A developer's pipeline is blocked by an OPA policy. Instead of reading Rego code or asking the platform team, they ask Claude to explain why.
+**Story:** A developer's pipeline is blocked by an OPA policy. Instead of reading Rego code or asking the platform team, they use Harness AIDA to understand why.
 
 ### Step 1 — Policy violation
 
@@ -505,19 +498,21 @@ Trigger a pipeline that violates a policy (e.g., missing SBOM, change window vio
 
 ---
 
-### Step 2 — Ask Claude to explain
+### Step 2 — Use Harness AIDA to explain the policy failure
+
+In the failed pipeline execution view, click the **AIDA** button and ask:
 
 ```
 Why did my pipeline fail the policy check?
 ```
 
-**What Claude does:**
-- Reads the policy evaluation results from Harness
+**What Harness AIDA does:**
+- Reads the policy evaluation results from the execution
 - Analyzes the specific Rego rules that failed
 - Translates the policy logic into plain English
-- Provides specific remediation steps
+- Provides specific remediation steps directly in the UI
 
-**Claude responds:**
+**Harness AIDA responds:**
 ```
 Your pipeline was blocked by the "Image Security Policy" in the "Image Security" policy set.
 
@@ -532,7 +527,7 @@ To fix:
 This policy is enforced on all production deployments to meet supply chain compliance requirements.
 ```
 
-**Talking point:** *"OPA policies are powerful but opaque. Claude translates them. The developer doesn't need to know Rego, understand policy structure, or read documentation — they just ask why, and get an answer in seconds."*
+**Talking point:** *"OPA policies are powerful but can be complex to understand. Harness AIDA translates them right in the platform. The developer doesn't need to know Rego, understand policy structure, or read documentation — they just ask AIDA why their pipeline failed and get an answer in seconds."*
 
 ---
 
