@@ -291,21 +291,9 @@ Before running: delete the new test.
 
 ---
 
-## Reset Between Demos
-
-**Scenario 1 reset** — revert the transaction endpoint on the demo-banking-api repo so the "day in the life" story works again:
-```
-Revert the account transaction endpoint commit in the demo-banking-api and push to main.
-```
-
-**Scenario 2 reset** — delete only the pipeline (leave service, registry, and repo in place):
-```
-Delete the fx-rates-api pipeline from Harness.
-```
-
----
-
 ## Scenario 3 — Release Readiness Assessment with AI
+
+**Note:** Scenarios 3-7 demonstrate Harness platform capabilities accessed through Claude AI, but the primary focus is on Harness features rather than Claude Code development workflows.
 
 **Story:** A release manager needs to decide whether a build is ready for production. Instead of manually checking multiple dashboards, they ask Claude to perform a comprehensive readiness assessment.
 
@@ -562,5 +550,19 @@ This policy is enforced on all production deployments to meet supply chain compl
 - Pipeline: `fx_rates_api` → Service: `fxratesapi`
 
 **Fix:** Update the pipeline's `serviceRef` field to use the lowercase, no-separator format. Claude will automatically detect this error and fix it, saving the pattern to memory.
+
+---
+
+## Reset Between Demos
+
+**Scenario 1 reset** — revert the transaction endpoint on the demo-banking-api repo so the "day in the life" story works again:
+```
+Revert the account transaction endpoint commit in the demo-banking-api and push to main.
+```
+
+**Scenario 2 reset** — delete only the pipeline (leave service, registry, and repo in place):
+```
+Delete the fx-rates-api pipeline from Harness.
+```
 
 ---
