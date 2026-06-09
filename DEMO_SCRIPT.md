@@ -305,6 +305,249 @@ Delete the fx-rates-api pipeline from Harness.
 
 ---
 
+## Scenario 3 — Release Readiness Assessment with AI
+
+**Story:** A release manager needs to decide whether a build is ready for production. Instead of manually checking multiple dashboards, they ask Claude to perform a comprehensive readiness assessment.
+
+### Step 1 — Ask Claude for a release assessment
+
+In the Claude terminal:
+
+```
+Review this release for production readiness. Check build status, tests, approvals, security scans, policy violations, deployment history, rollback readiness, change ticket quality, and observability coverage. Give a go/no-go recommendation.
+```
+
+**What Claude does:**
+- Analyzes the latest pipeline execution across all stages
+- Reviews test results, coverage metrics, and STO findings
+- Checks approval history and change ticket details
+- Evaluates policy compliance (OPA evaluations)
+- Assesses SBOM completeness and attestation
+- Provides a structured go/no-go recommendation with reasoning
+
+**Talking point:** *"This is AI as a release manager's co-pilot. Claude just reviewed 8 different aspects of production readiness — things that would normally require opening multiple tabs in Harness — and gave you a single recommendation with evidence."*
+
+---
+
+## Scenario 4 — AI-Generated Pipeline from Scratch
+
+**Story:** A developer has a Go microservice in a Harness Code repo and needs a complete CI/CD pipeline. Instead of copying YAML or clicking through the UI, they describe the entire pipeline structure to Claude in plain English.
+
+### Step 1 — Create the pipeline with Claude
+
+In the Claude terminal:
+
+```
+Create a Harness pipeline for org default and project apac_ai_demo with name and identifier gosampleapp. Add tag ai_generated: "true".
+
+Codebase configuration:
+- repoName: gosample
+- build: runtime input (<+input>)
+- sparseCheckout: empty array
+
+Stage 1 - CI Stage:
+- Name and identifier: build
+- Clone codebase: enabled
+- Platform: Linux/Amd64
+- Runtime: Cloud
+- Step: BuildAndPushDockerRegistry
+  - identifier: build_and_push_docker
+  - name: Build and Push Docker
+  - No connectorRef use registryRef
+  - registryRef: gosampleapp
+  - repo: gosample
+  - tags: [latest]
+  - dockerfile: Dockerfile
+  - context: .
+  - caching: false
+  - timeout: 10m
+- Failure strategy: MarkAsFailure on all errors
+
+Stage 2 - CD Stage:
+- Name and identifier: deploy
+- Deployment type: Kubernetes
+- Service: goapp with Kubernetes service definition
+- Artifact inputs: primaryArtifactRef and sources as runtime inputs (<+input>)
+- Environment: dev
+- Infrastructure: dev
+- Execution step: K8sRollingDeploy
+  - identifier: k8s_rolling_deploy
+  - name: K8s Rolling Deploy
+  - skipDryRun: false
+  - pruningEnabled: false
+  - timeout: 10m
+- Rollback step: K8sRollingRollback
+  - identifier: k8s_rolling_rollback
+  - name: k8s_rolling_rollback
+  - pruningEnabled: false
+  - timeout: 10m
+- Failure strategy: StageRollback on all errors
+```
+
+**What Claude does:**
+- Parses the structured requirements
+- Generates complete pipeline YAML with proper Harness schema
+- Creates both CI and CD stages with correct step configuration
+- Sets up failure strategies and rollback logic
+- Confirms: *"Pipeline gosampleapp created with build and deploy stages."*
+
+**Show in Harness UI:** Open the new pipeline — two stages with proper configuration, tagged with `ai_generated: true`.
+
+**Talking point:** *"The developer described what they wanted. Claude translated it into 200+ lines of Harness YAML — with proper schema, failure strategies, and rollback logic. No docs, no templates, just conversation."*
+
+---
+
+### Step 2 — Enhance the pipeline with security and approvals
+
+Still in Claude:
+
+```
+Modify the gosampleapp pipeline to add security scanning and an approval gate before deployment:
+
+Add a Semgrep security scan step as the first step in the build stage:
+- Use orchestration mode with default config
+- Target type: repository with auto detection
+- Log level: info
+
+Add an Approval stage between the build and deploy stages:
+- Use HarnessApproval step with 1 day timeout
+- Require minimum 1 approver from account._account_all_users
+- Include pipeline execution history in the approval message
+- Allow pipeline executor to approve
+- Disable auto-reject
+```
+
+**What Claude does:**
+- Reads the current pipeline
+- Adds Semgrep step at the beginning of the build stage
+- Inserts a new Approval stage between build and deploy
+- Configures HarnessApproval with specified approver group and timeout
+- Updates the pipeline in Harness
+
+**Talking point:** *"The pipeline just evolved. Security scanning and human approval gates were added with two sentences — no YAML editing, no reading docs about Semgrep configuration."*
+
+---
+
+## Scenario 5 — Test Intelligence and PR-Based Security Scanning
+
+**Story:** Demonstrate Harness's intelligent testing and security features integrated with Claude.
+
+### Step 1 — Test Intelligence in action
+
+Show the existing e2e pipeline with Test Intelligence enabled:
+
+```
+Show me the test intelligence results from the latest e2e pipeline run.
+```
+
+**What to show in Harness UI:**
+- Test Intelligence dashboard showing only changed tests running
+- Time savings compared to full test suite
+- Test selection visualization
+
+**Talking point:** *"Test Intelligence automatically identifies which tests are affected by code changes. Instead of running 100% of tests on every commit, you run the 15% that actually matter — cutting CI time by 5x."*
+
+---
+
+### Step 2 — STO on Pull Requests
+
+Create a PR with a vulnerability, show STO catching it:
+
+```
+Create a pull request that adds a dependency with a known CVE.
+```
+
+**What to show in Harness UI:**
+- PR pipeline triggered automatically
+- STO scan runs and detects the vulnerability
+- PR check fails with security finding details
+- Inline comment on the PR with remediation guidance
+
+**Talking point:** *"Security scanning isn't just for main branch. Every PR gets scanned before merge. The security gate is at code review time, not deployment time."*
+
+---
+
+## Scenario 6 — Continuous Verification and Auto-Rollback
+
+**Story:** A deployment goes to production but causes a latency spike. Harness CV detects the anomaly and automatically rolls back.
+
+### Step 1 — Show CV configuration
+
+```
+Show me the continuous verification configuration for the banking API production deployment.
+```
+
+**What to show in Harness UI:**
+- CV configured with Prometheus/Datadog metrics
+- Health sources monitoring latency, error rate, throughput
+- Anomaly detection thresholds
+
+---
+
+### Step 2 — Trigger a deployment with CV
+
+Deploy a version that intentionally causes issues (simulated or pre-staged).
+
+**What happens:**
+- Deployment completes
+- CV verification phase begins (5-10 minute window)
+- Metrics show anomaly (latency spike)
+- CV marks deployment as unhealthy
+- Auto-rollback triggers
+- Previous version restored
+
+**Show in Harness UI:**
+- CV verification timeline with red anomaly markers
+- Auto-rollback execution logs
+- Service restored to previous stable version
+
+**Talking point:** *"This is closed-loop automation. Harness deployed it, monitored it, detected the problem, and fixed it — all without human intervention. The developer's code never reached users in a broken state."*
+
+---
+
+## Scenario 7 — OPA Policy AI Assistant
+
+**Story:** A developer's pipeline is blocked by an OPA policy. Instead of reading Rego code or asking the platform team, they ask Claude to explain why.
+
+### Step 1 — Policy violation
+
+Trigger a pipeline that violates a policy (e.g., missing SBOM, change window violation, critical CVE).
+
+**Pipeline fails** with: *"Policy evaluation failed: Image Security Policy"*
+
+---
+
+### Step 2 — Ask Claude to explain
+
+```
+Why did my pipeline fail the policy check?
+```
+
+**What Claude does:**
+- Reads the policy evaluation results from Harness
+- Analyzes the specific Rego rules that failed
+- Translates the policy logic into plain English
+- Provides specific remediation steps
+
+**Claude responds:**
+```
+Your pipeline was blocked by the "Image Security Policy" in the "Image Security" policy set.
+
+Failed rule: "SBOM required policy"
+Reason: The Docker image was pushed without a signed SBOM attestation.
+
+To fix:
+1. Ensure the "Generate SBOM" step runs after your Docker build
+2. Verify cosign is configured to sign the attestation
+3. The SBOM must be attested before the image is pushed to HAR
+
+This policy is enforced on all production deployments to meet supply chain compliance requirements.
+```
+
+**Talking point:** *"OPA policies are powerful but opaque. Claude translates them. The developer doesn't need to know Rego, understand policy structure, or read documentation — they just ask why, and get an answer in seconds."*
+
+---
+
 ## Troubleshooting
 
 ### Service Naming Convention
