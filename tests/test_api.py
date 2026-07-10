@@ -2,8 +2,10 @@
 Tests for the demo banking API.
 """
 import json
+import datetime
 import pytest
-from app.main import app, ACCOUNTS, TRANSACTIONS
+import jwt as pyjwt
+from app.main import app, ACCOUNTS, TRANSACTIONS, SECRET_KEY
 
 
 @pytest.fixture(autouse=True)
@@ -175,3 +177,179 @@ def test_list_transactions_after_transfer(client, auth_headers):
     )
     resp = client.get("/transactions", headers=auth_headers)
     assert resp.get_json()["count"] == 1
+
+
+# ---------------------------------------------------------------------------
+# Auth token error cases (require_auth decorator)
+# ---------------------------------------------------------------------------
+
+def test_expired_token_rejected(client):
+    payload = {
+        "sub": "testuser",
+        "iat": datetime.datetime.utcnow() - datetime.timedelta(hours=10),
+        "exp": datetime.datetime.utcnow() - datetime.timedelta(hours=2),
+    }
+    expired_token = pyjwt.encode(payload, SECRET_KEY, algorithm="HS256")
+    resp = client.get("/accounts", headers={"Authorization": f"Bearer {expired_token}"})
+    assert resp.status_code == 401
+    assert resp.get_json()["error"] == "Token expired"
+
+
+def test_invalid_token_rejected(client):
+    resp = client.get("/accounts", headers={"Authorization": "Bearer this.is.not.a.valid.jwt"})
+    assert resp.status_code == 401
+    assert resp.get_json()["error"] == "Invalid token"
+
+
+def test_wrong_signature_token_rejected(client):
+    payload = {
+        "sub": "testuser",
+        "iat": datetime.datetime.utcnow(),
+        "exp": datetime.datetime.utcnow() + datetime.timedelta(hours=1),
+    }
+    bad_token = pyjwt.encode(payload, "wrong-secret-key", algorithm="HS256")
+    resp = client.get("/accounts", headers={"Authorization": f"Bearer {bad_token}"})
+    assert resp.status_code == 401
+    assert resp.get_json()["error"] == "Invalid token"
+
+
+# ---------------------------------------------------------------------------
+# Balance endpoint — missing account
+# ---------------------------------------------------------------------------
+
+def test_get_balance_not_found(client, auth_headers):
+    resp = client.get("/accounts/NONEXISTENT/balance", headers=auth_headers)
+    assert resp.status_code == 404
+    assert "not found" in resp.get_json()["error"].lower()
+
+
+# ---------------------------------------------------------------------------
+# Transfer — invalid destination account
+# ---------------------------------------------------------------------------
+
+def test_transfer_invalid_destination(client, auth_headers):
+    resp = client.post(
+        "/transfers",
+        data=json.dumps({"from_account": "ACC001", "to_account": "INVALID_DST", "amount": 100}),
+        content_type="application/json",
+        headers=auth_headers,
+    )
+    assert resp.status_code == 404
+    assert "INVALID_DST" in resp.get_json()["error"]
+
+
+# ---------------------------------------------------------------------------
+# Transfer — missing required fields
+# ---------------------------------------------------------------------------
+
+def test_transfer_missing_from_account(client, auth_headers):
+    resp = client.post(
+        "/transfers",
+        data=json.dumps({"to_account": "ACC002", "amount": 100}),
+        content_type="application/json",
+        headers=auth_headers,
+    )
+    assert resp.status_code == 400
+
+
+def test_transfer_zero_amount(client, auth_headers):
+    resp = client.post(
+        "/transfers",
+        data=json.dumps({"from_account": "ACC001", "to_account": "ACC002", "amount": 0}),
+        content_type="application/json",
+        headers=auth_headers,
+    )
+    assert resp.status_code == 400
+
+
+# ---------------------------------------------------------------------------
+# Login — edge cases
+# ---------------------------------------------------------------------------
+
+def test_login_empty_password(client):
+    resp = client.post(
+        "/auth/login",
+        data=json.dumps({"username": "alice", "password": ""}),
+        content_type="application/json",
+    )
+    assert resp.status_code == 400
+
+
+def test_login_empty_username(client):
+    resp = client.post(
+        "/auth/login",
+        data=json.dumps({"username": "", "password": "secret"}),
+        content_type="application/json",
+    )
+    assert resp.status_code == 400
+
+
+def test_login_returns_expires_in(client):
+    resp = client.post(
+        "/auth/login",
+        data=json.dumps({"username": "alice", "password": "secret"}),
+        content_type="application/json",
+    )
+    assert resp.status_code == 200
+    data = resp.get_json()
+    assert data["expires_in"] == 28800
+
+
+# ---------------------------------------------------------------------------
+# Health endpoint
+# ---------------------------------------------------------------------------
+
+def test_health_returns_version(client):
+    resp = client.get("/health")
+    assert resp.status_code == 200
+    assert resp.get_json()["version"] == "1.0.0"
+
+
+# ---------------------------------------------------------------------------
+# Account details
+# ---------------------------------------------------------------------------
+
+def test_get_account_returns_currency(client, auth_headers):
+    resp = client.get("/accounts/ACC003", headers=auth_headers)
+    assert resp.status_code == 200
+    data = resp.get_json()
+    assert data["owner"] == "carol"
+    assert data["currency"] == "AUD"
+    assert data["balance"] == 25000.00
+
+
+def test_transfer_records_initiator(client, auth_headers):
+    resp = client.post(
+        "/transfers",
+        data=json.dumps({"from_account": "ACC001", "to_account": "ACC002", "amount": 100}),
+        content_type="application/json",
+        headers=auth_headers,
+    )
+    assert resp.status_code == 201
+    data = resp.get_json()
+    assert data["initiated_by"] == "testuser"
+    assert data["currency"] == "AUD"
+    assert "tx_id" in data
+    assert "timestamp" in data
+
+
+def test_transfer_sequential_tx_ids(client, auth_headers):
+    for i in range(3):
+        client.post(
+            "/transfers",
+            data=json.dumps({"from_account": "ACC003", "to_account": "ACC002", "amount": 10}),
+            content_type="application/json",
+            headers=auth_headers,
+        )
+    assert TRANSACTIONS[0]["tx_id"] == "TX000001"
+    assert TRANSACTIONS[1]["tx_id"] == "TX000002"
+    assert TRANSACTIONS[2]["tx_id"] == "TX000003"
+
+
+def test_get_balance_returns_as_of(client, auth_headers):
+    resp = client.get("/accounts/ACC002/balance", headers=auth_headers)
+    assert resp.status_code == 200
+    data = resp.get_json()
+    assert data["account_id"] == "ACC002"
+    assert "as_of" in data
+    assert data["as_of"].endswith("Z")
