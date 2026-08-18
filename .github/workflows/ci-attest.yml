@@ -17,22 +17,25 @@ jobs:
 
     env:
       # --------------------------------------------------------
-      # Artifact
+      # IMAGE
       # --------------------------------------------------------
       IMAGE_NAME: ${{ vars.DOCKER_USERNAME }}/demo-banking-api
       IMAGE_TAG: ${{ github.sha }}
 
       # --------------------------------------------------------
-      # Docker credentials
+      # DOCKER
       #
-      # Harness SCS actions run inside their own Docker
-      # containers, so expose these at job level.
+      # Harness SCS actions run inside Docker containers and
+      # use these credentials to pull/push registry content.
       # --------------------------------------------------------
       DOCKER_USERNAME: ${{ vars.DOCKER_USERNAME }}
       DOCKER_PASSWORD: ${{ secrets.DOCKER_PASSWORD }}
 
       # --------------------------------------------------------
-      # Persistent HCP Vault
+      # PERSISTENT HCP VAULT
+      #
+      # Do NOT put VAULT_ADDR under "with:" on the Harness
+      # actions. The plugin receives these as environment vars.
       # --------------------------------------------------------
       VAULT_ADDR: ${{ vars.VAULT_URL }}
       VAULT_NAMESPACE: ${{ vars.VAULT_NAMESPACE }}
@@ -46,7 +49,7 @@ jobs:
         uses: actions/checkout@v6
 
       # ========================================================
-      # 2. SET UP PYTHON
+      # 2. PYTHON
       # ========================================================
       - name: Set up Python
         uses: actions/setup-python@v6
@@ -54,7 +57,7 @@ jobs:
           python-version: "3.12"
 
       # ========================================================
-      # 3. INSTALL DEPENDENCIES
+      # 3. DEPENDENCIES
       # ========================================================
       - name: Install dependencies
         run: |
@@ -63,9 +66,7 @@ jobs:
           pip install pytest
 
       # ========================================================
-      # 4. RUN TESTS
-      #
-      # If this fails, nothing after it runs.
+      # 4. TESTS
       # ========================================================
       - name: Run tests
         run: |
@@ -74,11 +75,8 @@ jobs:
       # ========================================================
       # 5. AUTHENTICATE TO PERSISTENT HCP VAULT
       #
-      # Uses:
-      #   VAULT_ROLE_ID
-      #   VAULT_SECRET_ID
-      #
-      # Gets a short-lived Vault token.
+      # Generates a short-lived VAULT_TOKEN for subsequent
+      # steps.
       # ========================================================
       - name: Authenticate to HCP Vault
         id: vault_login
@@ -92,12 +90,10 @@ jobs:
           exportToken: true
 
       # ========================================================
-      # 6. VERIFY WE CAN ACCESS THE PERSISTENT COSIGN KEY
+      # 6. VERIFY COSIGN KEY ACCESS
       #
-      # Existing Vault key:
-      #
-      #   transit/keys/cosign
-      #
+      # Persistent key:
+      # transit/keys/cosign
       # type: ecdsa-p256
       # ========================================================
       - name: Verify Vault Cosign key
@@ -108,10 +104,10 @@ jobs:
             "${VAULT_ADDR}/v1/transit/keys/cosign" \
             >/dev/null
 
-          echo "Persistent Vault signing key is accessible"
+          echo "Persistent Vault Cosign key accessible"
 
       # ========================================================
-      # 7. LOGIN TO DOCKER HUB
+      # 7. DOCKER LOGIN
       # ========================================================
       - name: Login to Docker Hub
         uses: docker/login-action@v3
@@ -120,20 +116,25 @@ jobs:
           password: ${{ secrets.DOCKER_PASSWORD }}
 
       # ========================================================
-      # 8. SET UP DOCKER BUILDX
+      # 8. BUILDX
       # ========================================================
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
       # ========================================================
-      # 9. BUILD + PUSH IMAGE
+      # 9. BUILD + PUSH
       #
-      # Git commit SHA becomes the tag.
+      # IMPORTANT FIX:
       #
-      # Example:
+      # - Build one platform only.
+      # - Disable Docker Buildx provenance.
+      # - Disable Docker Buildx SBOM.
       #
-      # munkys123/demo-banking-api:
-      # a67e930db329...
+      # Harness is generating the authoritative SBOM + SLSA
+      # attestations for this demo.
+      #
+      # This avoids the OCI-index/platform-manifest digest split
+      # we saw previously.
       # ========================================================
       - name: Build and push image
         id: docker_build
@@ -141,43 +142,47 @@ jobs:
         with:
           context: .
           push: true
+
+          platforms: linux/amd64
+
           tags: ${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}
 
+          provenance: false
+          sbom: false
+
       # ========================================================
-      # 10. CAPTURE IMMUTABLE IMAGE DIGEST
+      # 10. CAPTURE IMMUTABLE DIGEST
       #
-      # This is the critical chain-of-custody identifier.
+      # This digest is passed into Harness CD.
       # ========================================================
       - name: Record artifact identity
         run: |
-          echo "IMAGE_DIGEST=${{ steps.docker_build.outputs.digest }}" \
-            >> "$GITHUB_ENV"
+          IMAGE_DIGEST="${{ steps.docker_build.outputs.digest }}"
+          IMAGE_DIGEST_REF="${IMAGE_NAME}@${IMAGE_DIGEST}"
 
-          echo "IMAGE_DIGEST_REF=${IMAGE_NAME}@${{ steps.docker_build.outputs.digest }}" \
-            >> "$GITHUB_ENV"
+          echo "IMAGE_DIGEST=${IMAGE_DIGEST}" >> "$GITHUB_ENV"
+          echo "IMAGE_DIGEST_REF=${IMAGE_DIGEST_REF}" >> "$GITHUB_ENV"
 
           echo
-          echo "Artifact identity"
-          echo "-----------------"
+          echo "=============================================="
+          echo "ARTIFACT CREATED"
+          echo "=============================================="
           echo "Image : ${IMAGE_NAME}:${IMAGE_TAG}"
-          echo "Digest: ${{ steps.docker_build.outputs.digest }}"
+          echo "Digest: ${IMAGE_DIGEST}"
+          echo "Ref   : ${IMAGE_DIGEST_REF}"
           echo "Commit: ${GITHUB_SHA}"
+          echo "=============================================="
 
       # ========================================================
       # 11. HARNESS SBOM GENERATION + ATTESTATION
       #
-      # Harness:
+      # Generates SBOM
+      # Uploads SBOM into Harness SCS
+      # Signs SBOM using HCP Vault transit/keys/cosign
+      # Pushes signed attestation to Docker Hub
       #
-      #   - Resolves artifact digest
-      #   - Runs Syft
-      #   - Generates SPDX SBOM
-      #   - Uploads SBOM to Harness SCS
-      #   - Signs SBOM using persistent Vault key
-      #   - Pushes attestation to registry
-      #
-      # Vault key:
-      #
-      #   transit/keys/cosign
+      # VAULT_ADDR / VAULT_TOKEN / VAULT_NAMESPACE arrive
+      # through environment variables.
       # ========================================================
       - name: Generate and attest SBOM in Harness
         uses: harness/github-actions/sbom-generation@1.1.0
@@ -190,8 +195,6 @@ jobs:
 
           HARNESS_API_KEY: ${{ secrets.HARNESS_API_KEY }}
 
-          VAULT_ADDR: ${{ vars.VAULT_URL }}
-
           TARGET: ${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}
 
           TOOL: Syft
@@ -203,7 +206,12 @@ jobs:
       # ========================================================
       # 12. HARNESS SLSA PROVENANCE + ATTESTATION
       #
-      # Keep this sequentially AFTER SBOM.
+      # KEEP AFTER SBOM.
+      #
+      # Generates provenance
+      # Uploads provenance into Harness SCS
+      # Signs provenance using same persistent key
+      # Pushes SLSA attestation to Docker Hub
       # ========================================================
       - name: Generate and attest SLSA provenance in Harness
         uses: harness/github-actions/slsa-generation@1.1.0
@@ -216,8 +224,6 @@ jobs:
 
           HARNESS_API_KEY: ${{ secrets.HARNESS_API_KEY }}
 
-          VAULT_ADDR: ${{ vars.VAULT_URL }}
-
           TARGET: ${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}
 
           ATTEST: true
@@ -228,6 +234,7 @@ jobs:
       # ========================================================
       - name: Display chain of custody
         run: |
+          echo
           echo "=================================================="
           echo "CI + SUPPLY CHAIN COMPLETE"
           echo "=================================================="
@@ -246,7 +253,7 @@ jobs:
           echo "SLSA Provenance   : GENERATED"
           echo "SLSA Attestation  : SIGNED"
           echo
-          echo "Vault             : HCP Vault"
+          echo "Vault             : Persistent HCP Vault"
           echo "Signing Key       : transit/keys/cosign"
           echo
           echo "=================================================="
@@ -254,25 +261,17 @@ jobs:
       # ========================================================
       # 14. TRIGGER HARNESS CD
       #
-      # Only runs if EVERYTHING above succeeded.
+      # Only executes after:
       #
-      # Sends:
+      # tests
+      # build
+      # push
+      # SBOM generation
+      # SBOM signing
+      # SLSA generation
+      # SLSA signing
       #
-      #   image
-      #   tag
-      #   digest
-      #   immutable image reference
-      #   Git commit
-      #   GitHub workflow/run information
-      #
-      # Harness can reference these as:
-      #
-      # <+trigger.payload.image>
-      # <+trigger.payload.tag>
-      # <+trigger.payload.digest>
-      # <+trigger.payload.imageDigestRef>
-      # <+trigger.payload.commit>
-      # <+trigger.payload.githubRunId>
+      # have all succeeded.
       # ========================================================
       - name: Trigger Harness CD
         env:
@@ -305,7 +304,8 @@ jobs:
               slsaAttested: true
             }')
 
-          echo "Triggering Harness CD..."
+          echo "Triggering Harness CD"
+          echo "Artifact: ${IMAGE_DIGEST_REF}"
 
           curl --fail-with-body \
             --request POST \
@@ -313,5 +313,4 @@ jobs:
             --url "${HARNESS_CD_WEBHOOK_URL}" \
             --data "${PAYLOAD}"
 
-          echo
           echo "Harness CD successfully triggered"
