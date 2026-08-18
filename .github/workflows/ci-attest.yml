@@ -2,7 +2,6 @@ name: GitHub CI to Harness SCS + CD
 
 on:
   workflow_dispatch:
-
   push:
     branches:
       - main
@@ -12,53 +11,44 @@ permissions:
 
 jobs:
   build-attest-deploy:
-    name: Test, Build, Attest and Trigger Harness CD
+    name: Test Build Attest Deploy
     runs-on: ubuntu-latest
 
     env:
-      # --------------------------------------------------------
-      # IMAGE
-      # --------------------------------------------------------
+      # Artifact
       IMAGE_NAME: ${{ vars.DOCKER_USERNAME }}/demo-banking-api
       IMAGE_TAG: ${{ github.sha }}
 
-      # --------------------------------------------------------
-      # DOCKER
-      #
-      # Harness SCS actions run inside Docker containers and
-      # use these credentials to pull/push registry content.
-      # --------------------------------------------------------
+      # Docker
       DOCKER_USERNAME: ${{ vars.DOCKER_USERNAME }}
       DOCKER_PASSWORD: ${{ secrets.DOCKER_PASSWORD }}
 
-      # --------------------------------------------------------
-      # PERSISTENT HCP VAULT
-      #
-      # Do NOT put VAULT_ADDR under "with:" on the Harness
-      # actions. The plugin receives these as environment vars.
-      # --------------------------------------------------------
+      # HCP Vault
       VAULT_ADDR: ${{ vars.VAULT_URL }}
       VAULT_NAMESPACE: ${{ vars.VAULT_NAMESPACE }}
+
+      # Custom test attestation predicate type.
+      # Use the SAME value later in Harness.
+      TEST_ATTESTATION_TYPE: https://example.com/attestations/test-results/v1
 
     steps:
 
       # ========================================================
-      # 1. CHECKOUT
+      # CHECKOUT
       # ========================================================
+
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v4
 
       # ========================================================
-      # 2. PYTHON
+      # PYTHON
       # ========================================================
+
       - name: Set up Python
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@v5
         with:
           python-version: "3.12"
 
-      # ========================================================
-      # 3. DEPENDENCIES
-      # ========================================================
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
@@ -66,20 +56,30 @@ jobs:
           pip install pytest
 
       # ========================================================
-      # 4. TESTS
+      # TEST
       # ========================================================
+
       - name: Run tests
         run: |
-          python -m pytest -q
+          mkdir -p evidence
+
+          python -m pytest \
+            -q \
+            --junitxml=evidence/pytest.xml
+
+      # Preserve the actual JUnit report in GitHub.
+      - name: Upload test report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pytest-report
+          path: evidence/pytest.xml
 
       # ========================================================
-      # 5. AUTHENTICATE TO PERSISTENT HCP VAULT
-      #
-      # Generates a short-lived VAULT_TOKEN for subsequent
-      # steps.
+      # HCP VAULT
       # ========================================================
+
       - name: Authenticate to HCP Vault
-        id: vault_login
         uses: hashicorp/vault-action@v3
         with:
           url: ${{ vars.VAULT_URL }}
@@ -89,13 +89,6 @@ jobs:
           secretId: ${{ secrets.VAULT_SECRET_ID }}
           exportToken: true
 
-      # ========================================================
-      # 6. VERIFY COSIGN KEY ACCESS
-      #
-      # Persistent key:
-      # transit/keys/cosign
-      # type: ecdsa-p256
-      # ========================================================
       - name: Verify Vault Cosign key
         run: |
           curl --fail \
@@ -104,57 +97,49 @@ jobs:
             "${VAULT_ADDR}/v1/transit/keys/cosign" \
             >/dev/null
 
-          echo "Persistent Vault Cosign key accessible"
+          echo "Vault Cosign key accessible"
 
       # ========================================================
-      # 7. DOCKER LOGIN
+      # COSIGN
       # ========================================================
+
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@v4.1.2
+
+      - name: Check Cosign
+        run: cosign version
+
+      # ========================================================
+      # DOCKER
+      # ========================================================
+
       - name: Login to Docker Hub
         uses: docker/login-action@v3
         with:
           username: ${{ vars.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_PASSWORD }}
 
-      # ========================================================
-      # 8. BUILDX
-      # ========================================================
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      # ========================================================
-      # 9. BUILD + PUSH
-      #
-      # IMPORTANT FIX:
-      #
-      # - Build one platform only.
-      # - Disable Docker Buildx provenance.
-      # - Disable Docker Buildx SBOM.
-      #
-      # Harness is generating the authoritative SBOM + SLSA
-      # attestations for this demo.
-      #
-      # This avoids the OCI-index/platform-manifest digest split
-      # we saw previously.
-      # ========================================================
+      # IMPORTANT:
+      # single platform + provenance:false + sbom:false
+      # keeps our immutable digest consistent with Harness.
       - name: Build and push image
         id: docker_build
         uses: docker/build-push-action@v6
         with:
           context: .
           push: true
-
           platforms: linux/amd64
-
           tags: ${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}
-
           provenance: false
           sbom: false
 
       # ========================================================
-      # 10. CAPTURE IMMUTABLE DIGEST
-      #
-      # This digest is passed into Harness CD.
+      # IMMUTABLE ARTIFACT IDENTITY
       # ========================================================
+
       - name: Record artifact identity
         run: |
           IMAGE_DIGEST="${{ steps.docker_build.outputs.digest }}"
@@ -163,36 +148,99 @@ jobs:
           echo "IMAGE_DIGEST=${IMAGE_DIGEST}" >> "$GITHUB_ENV"
           echo "IMAGE_DIGEST_REF=${IMAGE_DIGEST_REF}" >> "$GITHUB_ENV"
 
-          echo
-          echo "=============================================="
-          echo "ARTIFACT CREATED"
-          echo "=============================================="
-          echo "Image : ${IMAGE_NAME}:${IMAGE_TAG}"
-          echo "Digest: ${IMAGE_DIGEST}"
-          echo "Ref   : ${IMAGE_DIGEST_REF}"
-          echo "Commit: ${GITHUB_SHA}"
-          echo "=============================================="
+          echo "Image  : ${IMAGE_NAME}:${IMAGE_TAG}"
+          echo "Digest : ${IMAGE_DIGEST}"
+          echo "Ref    : ${IMAGE_DIGEST_REF}"
 
       # ========================================================
-      # 11. HARNESS SBOM GENERATION + ATTESTATION
-      #
-      # Generates SBOM
-      # Uploads SBOM into Harness SCS
-      # Signs SBOM using HCP Vault transit/keys/cosign
-      # Pushes signed attestation to Docker Hub
-      #
-      # VAULT_ADDR / VAULT_TOKEN / VAULT_NAMESPACE arrive
-      # through environment variables.
+      # CREATE SIGNED TEST EVIDENCE PREDICATE
       # ========================================================
+
+      - name: Create test evidence
+        run: |
+          python <<'PY'
+          import hashlib
+          import json
+          import os
+          import xml.etree.ElementTree as ET
+
+          report = "evidence/pytest.xml"
+
+          tree = ET.parse(report)
+          root = tree.getroot()
+
+          def integer(value):
+              try:
+                  return int(value or 0)
+              except (TypeError, ValueError):
+                  return 0
+
+          if root.tag.endswith("testsuite"):
+              suites = [root]
+          else:
+              suites = root.findall(".//testsuite")
+
+          total = sum(integer(s.attrib.get("tests")) for s in suites)
+          failures = sum(integer(s.attrib.get("failures")) for s in suites)
+          errors = sum(integer(s.attrib.get("errors")) for s in suites)
+          skipped = sum(integer(s.attrib.get("skipped")) for s in suites)
+
+          passed = max(total - failures - errors - skipped, 0)
+
+          with open(report, "rb") as f:
+              report_sha256 = hashlib.sha256(f.read()).hexdigest()
+
+          predicate = {
+              "schemaVersion": "1.0",
+              "status": "PASSED",
+              "framework": "pytest",
+
+              "repository": os.environ["GITHUB_REPOSITORY"],
+              "commit": os.environ["GITHUB_SHA"],
+              "workflow": os.environ["GITHUB_WORKFLOW"],
+
+              "githubRunId": os.environ["GITHUB_RUN_ID"],
+              "githubRunNumber": os.environ["GITHUB_RUN_NUMBER"],
+              "githubRunUrl":
+                  f'https://github.com/{os.environ["GITHUB_REPOSITORY"]}/actions/runs/{os.environ["GITHUB_RUN_ID"]}',
+
+              "artifactDigest": os.environ["IMAGE_DIGEST"],
+
+              "tests": {
+                  "total": total,
+                  "passed": passed,
+                  "failures": failures,
+                  "errors": errors,
+                  "skipped": skipped,
+                  "reportFormat": "junit",
+                  "reportSha256": report_sha256
+              }
+          }
+
+          with open("evidence/test-results.json", "w") as f:
+              json.dump(predicate, f, indent=2)
+
+          with open(os.environ["GITHUB_ENV"], "a") as f:
+              f.write(f"TEST_TOTAL={total}\n")
+              f.write(f"TEST_PASSED={passed}\n")
+              f.write(f"TEST_FAILURES={failures}\n")
+              f.write(f"TEST_ERRORS={errors}\n")
+              f.write(f"TEST_SKIPPED={skipped}\n")
+
+          print(json.dumps(predicate, indent=2))
+          PY
+
+      # ========================================================
+      # HARNESS SBOM
+      # ========================================================
+
       - name: Generate and attest SBOM in Harness
         uses: harness/github-actions/sbom-generation@1.1.0
         with:
           HARNESS_ACCOUNT_URL: https://app.harness.io
-
           HARNESS_ACCOUNT_ID: ${{ vars.HARNESS_ACCOUNT_ID }}
           HARNESS_ORG_ID: ${{ vars.HARNESS_ORG_ID }}
           HARNESS_PROJECT_ID: ${{ vars.HARNESS_PROJECT_ID }}
-
           HARNESS_API_KEY: ${{ secrets.HARNESS_API_KEY }}
 
           TARGET: ${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}
@@ -204,24 +252,16 @@ jobs:
           KMS_KEY: cosign
 
       # ========================================================
-      # 12. HARNESS SLSA PROVENANCE + ATTESTATION
-      #
-      # KEEP AFTER SBOM.
-      #
-      # Generates provenance
-      # Uploads provenance into Harness SCS
-      # Signs provenance using same persistent key
-      # Pushes SLSA attestation to Docker Hub
+      # HARNESS SLSA
       # ========================================================
+
       - name: Generate and attest SLSA provenance in Harness
         uses: harness/github-actions/slsa-generation@1.1.0
         with:
           HARNESS_ACCOUNT_URL: https://app.harness.io
-
           HARNESS_ACCOUNT_ID: ${{ vars.HARNESS_ACCOUNT_ID }}
           HARNESS_ORG_ID: ${{ vars.HARNESS_ORG_ID }}
           HARNESS_PROJECT_ID: ${{ vars.HARNESS_PROJECT_ID }}
-
           HARNESS_API_KEY: ${{ secrets.HARNESS_API_KEY }}
 
           TARGET: ${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}
@@ -230,49 +270,68 @@ jobs:
           KMS_KEY: cosign
 
       # ========================================================
-      # 13. DISPLAY CHAIN OF CUSTODY
+      # TEST RESULTS ATTESTATION
+      #
+      # Same immutable digest
+      # Same persistent Vault signing key
       # ========================================================
-      - name: Display chain of custody
+
+      - name: Attest test results
         run: |
-          echo
-          echo "=================================================="
-          echo "CI + SUPPLY CHAIN COMPLETE"
-          echo "=================================================="
-          echo
-          echo "Repository        : ${GITHUB_REPOSITORY}"
-          echo "Git Commit        : ${GITHUB_SHA}"
-          echo "GitHub Run ID     : ${GITHUB_RUN_ID}"
-          echo
-          echo "Container         : ${IMAGE_NAME}:${IMAGE_TAG}"
-          echo "Digest            : ${IMAGE_DIGEST}"
-          echo "Immutable Artifact: ${IMAGE_DIGEST_REF}"
-          echo
-          echo "Tests             : PASSED"
-          echo "SBOM              : GENERATED"
-          echo "SBOM Attestation  : SIGNED"
-          echo "SLSA Provenance   : GENERATED"
-          echo "SLSA Attestation  : SIGNED"
-          echo
-          echo "Vault             : Persistent HCP Vault"
-          echo "Signing Key       : transit/keys/cosign"
-          echo
-          echo "=================================================="
+          echo "Creating test attestation for:"
+          echo "${IMAGE_DIGEST_REF}"
+
+          cosign attest \
+            --yes \
+            --key hashivault://cosign \
+            --predicate evidence/test-results.json \
+            --type "${TEST_ATTESTATION_TYPE}" \
+            "${IMAGE_DIGEST_REF}"
+
+          echo "Test attestation created"
 
       # ========================================================
-      # 14. TRIGGER HARNESS CD
-      #
-      # Only executes after:
-      #
-      # tests
-      # build
-      # push
-      # SBOM generation
-      # SBOM signing
-      # SLSA generation
-      # SLSA signing
-      #
-      # have all succeeded.
+      # VERIFY BEFORE HANDOFF TO HARNESS
       # ========================================================
+
+      - name: Verify test attestation
+        run: |
+          cosign verify-attestation \
+            --key hashivault://cosign \
+            --type "${TEST_ATTESTATION_TYPE}" \
+            --insecure-ignore-tlog \
+            "${IMAGE_DIGEST_REF}" \
+            >/dev/null
+
+          echo "Test attestation verified in GitHub"
+
+      # ========================================================
+      # CHAIN OF CUSTODY
+      # ========================================================
+
+      - name: Display chain of custody
+        run: |
+          echo "=============================================="
+          echo "CI SUPPLY CHAIN COMPLETE"
+          echo "=============================================="
+          echo "Repository        : ${GITHUB_REPOSITORY}"
+          echo "Commit            : ${GITHUB_SHA}"
+          echo "Artifact          : ${IMAGE_DIGEST_REF}"
+          echo
+          echo "Tests Total       : ${TEST_TOTAL}"
+          echo "Tests Passed      : ${TEST_PASSED}"
+          echo "Tests Failed      : ${TEST_FAILURES}"
+          echo "Tests Errors      : ${TEST_ERRORS}"
+          echo
+          echo "SBOM Attested     : YES"
+          echo "SLSA Attested     : YES"
+          echo "Tests Attested    : YES"
+          echo "=============================================="
+
+      # ========================================================
+      # TRIGGER HARNESS CD
+      # ========================================================
+
       - name: Trigger Harness CD
         env:
           HARNESS_CD_WEBHOOK_URL: ${{ secrets.HARNESS_CD_WEBHOOK_URL }}
@@ -288,24 +347,33 @@ jobs:
             --arg runId "${GITHUB_RUN_ID}" \
             --arg runNumber "${GITHUB_RUN_NUMBER}" \
             --arg runUrl "https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" \
+            --arg testAttestationType "${TEST_ATTESTATION_TYPE}" \
+            --argjson testTotal "${TEST_TOTAL}" \
+            --argjson testPassed "${TEST_PASSED}" \
             '{
               image: $image,
               tag: $tag,
               digest: $digest,
               imageDigestRef: $imageDigestRef,
+
               commit: $commit,
               repository: $repository,
               workflow: $workflow,
+
               githubRunId: $runId,
               githubRunNumber: $runNumber,
               githubRunUrl: $runUrl,
-              ciStatus: "PASSED",
-              sbomAttested: true,
-              slsaAttested: true
-            }')
 
-          echo "Triggering Harness CD"
-          echo "Artifact: ${IMAGE_DIGEST_REF}"
+              ciStatus: "PASSED",
+
+              sbomAttested: true,
+              slsaAttested: true,
+              testsAttested: true,
+
+              testAttestationType: $testAttestationType,
+              testsTotal: $testTotal,
+              testsPassed: $testPassed
+            }')
 
           curl --fail-with-body \
             --request POST \
@@ -313,4 +381,4 @@ jobs:
             --url "${HARNESS_CD_WEBHOOK_URL}" \
             --data "${PAYLOAD}"
 
-          echo "Harness CD successfully triggered"
+          echo "Harness CD triggered"
