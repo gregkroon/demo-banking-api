@@ -42,7 +42,7 @@ jobs:
         uses: actions/checkout@v4
 
       # ========================================================
-      # 2. PYTHON
+      # 2. SET UP PYTHON
       # ========================================================
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -61,10 +61,13 @@ jobs:
       # ========================================================
       # 4. RUN TESTS
       #
-      # If tests fail, workflow stops here.
-      # No image build.
-      # No SBOM/SLSA.
-      # No Harness deployment.
+      # HARD CI GATE:
+      #
+      # If pytest fails:
+      # - image is NOT built
+      # - SBOM is NOT generated
+      # - SLSA is NOT generated
+      # - Harness is NOT triggered
       # ========================================================
       - name: Run tests
         run: |
@@ -75,20 +78,23 @@ jobs:
             --junitxml=evidence/pytest.xml
 
       # ========================================================
-      # 5. STORE TEST REPORT
+      # 5. UPLOAD TEST REPORT
+      #
+      # Keeps detailed CI evidence in the GitHub Actions run.
       # ========================================================
       - name: Upload test report
-        if: always()
+        id: test_report
         uses: actions/upload-artifact@v4
         with:
           name: pytest-report
           path: evidence/pytest.xml
-          if-no-files-found: warn
+          if-no-files-found: error
 
       # ========================================================
       # 6. RECORD TEST SUMMARY
       #
-      # These values are passed to Harness as CI metadata.
+      # These values are passed to Harness for visibility.
+      # They are NOT part of the SLSA attestation.
       # ========================================================
       - name: Record test results
         run: |
@@ -142,7 +148,7 @@ jobs:
       # ========================================================
       # 7. AUTHENTICATE TO HCP VAULT
       #
-      # Exports VAULT_TOKEN for the Harness SBOM/SLSA actions.
+      # Exports VAULT_TOKEN for Harness SBOM/SLSA actions.
       # ========================================================
       - name: Authenticate to HCP Vault
         uses: hashicorp/vault-action@v3
@@ -183,12 +189,12 @@ jobs:
         uses: docker/setup-buildx-action@v3
 
       # ========================================================
-      # 11. BUILD + PUSH IMAGE
+      # 11. BUILD + PUSH
       #
-      # Single platform avoids OCI index/platform digest mismatch.
+      # Single platform avoids OCI index/platform digest issues.
       #
       # Buildx SBOM/provenance are disabled because Harness
-      # generates the authoritative SBOM and SLSA attestations.
+      # generates the supply-chain evidence.
       # ========================================================
       - name: Build and push image
         id: docker_build
@@ -202,7 +208,7 @@ jobs:
           sbom: false
 
       # ========================================================
-      # 12. RECORD IMMUTABLE ARTIFACT DIGEST
+      # 12. RECORD IMMUTABLE ARTIFACT IDENTITY
       # ========================================================
       - name: Record artifact identity
         run: |
@@ -222,13 +228,12 @@ jobs:
           echo "=============================================="
 
       # ========================================================
-      # 13. GENERATE + SIGN SBOM
+      # 13. GENERATE + ATTEST SBOM
       #
       # Harness:
-      # - scans the image
-      # - generates the SBOM
-      # - signs/attests using Vault transit/keys/cosign
-      # - uploads the normalized SBOM to Harness SCS
+      # - generates SBOM with Syft
+      # - signs the SBOM using Vault transit/keys/cosign
+      # - uploads/normalizes it into Harness SCS
       # ========================================================
       - name: Generate and attest SBOM in Harness
         uses: harness/github-actions/sbom-generation@1.1.0
@@ -248,7 +253,7 @@ jobs:
           KMS_KEY: cosign
 
       # ========================================================
-      # 14. GENERATE + SIGN SLSA PROVENANCE
+      # 14. GENERATE + ATTEST SLSA PROVENANCE
       #
       # Keep sequentially after SBOM.
       # ========================================================
@@ -267,7 +272,7 @@ jobs:
           KMS_KEY: cosign
 
       # ========================================================
-      # 15. DISPLAY CI CHAIN OF CUSTODY
+      # 15. DISPLAY CI CHAIN
       # ========================================================
       - name: Display chain of custody
         run: |
@@ -300,11 +305,19 @@ jobs:
       # ========================================================
       # 16. TRIGGER HARNESS CD
       #
-      # Pass exact immutable digest + CI metadata.
+      # Sends:
+      # - exact image digest
+      # - Git commit
+      # - GitHub run
+      # - test summary
+      # - test-report URL/digest
+      #
+      # Harness then independently verifies SLSA and SBOM.
       # ========================================================
       - name: Trigger Harness CD
         env:
           HARNESS_CD_WEBHOOK_URL: ${{ secrets.HARNESS_CD_WEBHOOK_URL }}
+
         run: |
           PAYLOAD=$(jq -n \
             --arg image "${IMAGE_NAME}" \
@@ -317,6 +330,8 @@ jobs:
             --arg runId "${GITHUB_RUN_ID}" \
             --arg runNumber "${GITHUB_RUN_NUMBER}" \
             --arg runUrl "https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" \
+            --arg testReportUrl "${{ steps.test_report.outputs.artifact-url }}" \
+            --arg testReportDigest "${{ steps.test_report.outputs.artifact-digest }}" \
             --argjson testTotal "${TEST_TOTAL}" \
             --argjson testPassed "${TEST_PASSED}" \
             --argjson testFailures "${TEST_FAILURES}" \
@@ -327,18 +342,26 @@ jobs:
               tag: $tag,
               digest: $digest,
               imageDigestRef: $imageDigestRef,
+
               commit: $commit,
               repository: $repository,
               workflow: $workflow,
+
               githubRunId: $runId,
               githubRunNumber: $runNumber,
               githubRunUrl: $runUrl,
+
               ciStatus: "PASSED",
+
               testsTotal: $testTotal,
               testsPassed: $testPassed,
               testsFailures: $testFailures,
               testsErrors: $testErrors,
               testsSkipped: $testSkipped,
+
+              testReportUrl: $testReportUrl,
+              testReportDigest: $testReportDigest,
+
               sbomAttested: true,
               slsaAttested: true
             }')
@@ -347,11 +370,12 @@ jobs:
           echo "=============================================="
           echo "TRIGGERING HARNESS CD"
           echo "=============================================="
+          echo
           echo "Artifact : ${IMAGE_DIGEST_REF}"
           echo "Tests    : ${TEST_PASSED}/${TEST_TOTAL} passed"
           echo
 
-          echo "Payload:"
+          echo "Webhook payload:"
           echo "${PAYLOAD}" | jq .
 
           curl --fail-with-body \
