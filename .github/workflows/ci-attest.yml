@@ -64,10 +64,10 @@ jobs:
       # HARD CI GATE:
       #
       # If pytest fails:
-      # - image is NOT built
-      # - SBOM is NOT generated
-      # - SLSA is NOT generated
-      # - Harness is NOT triggered
+      # - no image is built
+      # - no SBOM is generated
+      # - no SLSA is generated
+      # - Harness is never triggered
       # ========================================================
       - name: Run tests
         run: |
@@ -78,9 +78,10 @@ jobs:
             --junitxml=evidence/pytest.xml
 
       # ========================================================
-      # 5. UPLOAD TEST REPORT
+      # 5. UPLOAD ACTUAL TEST REPORT
       #
-      # Keeps detailed CI evidence in the GitHub Actions run.
+      # Harness will later use the artifact ID to retrieve this
+      # report directly from GitHub.
       # ========================================================
       - name: Upload test report
         id: test_report
@@ -93,8 +94,9 @@ jobs:
       # ========================================================
       # 6. RECORD TEST SUMMARY
       #
-      # These values are passed to Harness for visibility.
-      # They are NOT part of the SLSA attestation.
+      # This is metadata for visibility.
+      #
+      # Harness will independently inspect pytest.xml later.
       # ========================================================
       - name: Record test results
         run: |
@@ -118,18 +120,40 @@ jobs:
           else:
               suites = root.findall(".//testsuite")
 
-          total = sum(as_int(s.attrib.get("tests")) for s in suites)
-          failures = sum(as_int(s.attrib.get("failures")) for s in suites)
-          errors = sum(as_int(s.attrib.get("errors")) for s in suites)
-          skipped = sum(as_int(s.attrib.get("skipped")) for s in suites)
+          total = sum(
+              as_int(s.attrib.get("tests"))
+              for s in suites
+          )
 
-          passed = max(total - failures - errors - skipped, 0)
+          failures = sum(
+              as_int(s.attrib.get("failures"))
+              for s in suites
+          )
+
+          errors = sum(
+              as_int(s.attrib.get("errors"))
+              for s in suites
+          )
+
+          skipped = sum(
+              as_int(s.attrib.get("skipped"))
+              for s in suites
+          )
+
+          passed = max(
+              total - failures - errors - skipped,
+              0
+          )
 
           if total < 1:
-              raise SystemExit("ERROR: no tests were recorded")
+              raise SystemExit(
+                  "ERROR: no tests were recorded"
+              )
 
           if failures != 0 or errors != 0:
-              raise SystemExit("ERROR: test report contains failures/errors")
+              raise SystemExit(
+                  "ERROR: test report contains failures/errors"
+              )
 
           with open(os.environ["GITHUB_ENV"], "a") as f:
               f.write(f"TEST_TOTAL={total}\n")
@@ -148,7 +172,7 @@ jobs:
       # ========================================================
       # 7. AUTHENTICATE TO HCP VAULT
       #
-      # Exports VAULT_TOKEN for Harness SBOM/SLSA actions.
+      # Exports VAULT_TOKEN for the Harness SBOM/SLSA actions.
       # ========================================================
       - name: Authenticate to HCP Vault
         uses: hashicorp/vault-action@v3
@@ -161,7 +185,7 @@ jobs:
           exportToken: true
 
       # ========================================================
-      # 8. VERIFY VAULT SIGNING KEY
+      # 8. VERIFY VAULT COSIGN KEY
       # ========================================================
       - name: Verify Vault Cosign key
         run: |
@@ -174,7 +198,7 @@ jobs:
           echo "Vault Cosign key accessible"
 
       # ========================================================
-      # 9. DOCKER LOGIN
+      # 9. LOGIN TO DOCKER HUB
       # ========================================================
       - name: Login to Docker Hub
         uses: docker/login-action@v3
@@ -189,12 +213,15 @@ jobs:
         uses: docker/setup-buildx-action@v3
 
       # ========================================================
-      # 11. BUILD + PUSH
+      # 11. BUILD + PUSH IMAGE
       #
-      # Single platform avoids OCI index/platform digest issues.
+      # IMPORTANT:
       #
-      # Buildx SBOM/provenance are disabled because Harness
-      # generates the supply-chain evidence.
+      # Single platform avoids the OCI index/platform digest
+      # mismatch we previously encountered.
+      #
+      # Buildx-generated SBOM/provenance is disabled because
+      # Harness generates and signs those attestations.
       # ========================================================
       - name: Build and push image
         id: docker_build
@@ -228,12 +255,13 @@ jobs:
           echo "=============================================="
 
       # ========================================================
-      # 13. GENERATE + ATTEST SBOM
+      # 13. GENERATE + SIGN SBOM
       #
       # Harness:
-      # - generates SBOM with Syft
-      # - signs the SBOM using Vault transit/keys/cosign
-      # - uploads/normalizes it into Harness SCS
+      # - scans the image
+      # - generates the SBOM
+      # - signs/attests with Vault transit/keys/cosign
+      # - uploads/normalizes SBOM into Harness SCS
       # ========================================================
       - name: Generate and attest SBOM in Harness
         uses: harness/github-actions/sbom-generation@1.1.0
@@ -253,7 +281,7 @@ jobs:
           KMS_KEY: cosign
 
       # ========================================================
-      # 14. GENERATE + ATTEST SLSA PROVENANCE
+      # 14. GENERATE + SIGN SLSA PROVENANCE
       #
       # Keep sequentially after SBOM.
       # ========================================================
@@ -272,7 +300,7 @@ jobs:
           KMS_KEY: cosign
 
       # ========================================================
-      # 15. DISPLAY CI CHAIN
+      # 15. DISPLAY CI CHAIN OF CUSTODY
       # ========================================================
       - name: Display chain of custody
         run: |
@@ -281,38 +309,51 @@ jobs:
           echo "CI SUPPLY CHAIN COMPLETE"
           echo "=================================================="
           echo
-          echo "Repository        : ${GITHUB_REPOSITORY}"
-          echo "Commit            : ${GITHUB_SHA}"
-          echo "GitHub Run ID     : ${GITHUB_RUN_ID}"
-          echo "GitHub Run URL    : https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+          echo "Repository           : ${GITHUB_REPOSITORY}"
+          echo "Commit               : ${GITHUB_SHA}"
+          echo "GitHub Run ID        : ${GITHUB_RUN_ID}"
+          echo "GitHub Run URL       : https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
           echo
-          echo "Artifact          : ${IMAGE_DIGEST_REF}"
+          echo "Artifact             : ${IMAGE_DIGEST_REF}"
           echo
-          echo "Tests Total       : ${TEST_TOTAL}"
-          echo "Tests Passed      : ${TEST_PASSED}"
-          echo "Tests Failed      : ${TEST_FAILURES}"
-          echo "Tests Errors      : ${TEST_ERRORS}"
-          echo "Tests Skipped     : ${TEST_SKIPPED}"
+          echo "Tests Total          : ${TEST_TOTAL}"
+          echo "Tests Passed         : ${TEST_PASSED}"
+          echo "Tests Failed         : ${TEST_FAILURES}"
+          echo "Tests Errors         : ${TEST_ERRORS}"
+          echo "Tests Skipped        : ${TEST_SKIPPED}"
           echo
-          echo "CI Status         : PASSED"
-          echo "SBOM Attested     : YES"
-          echo "SLSA Attested     : YES"
+          echo "Test Artifact ID     : ${{ steps.test_report.outputs.artifact-id }}"
+          echo "Test Artifact Digest : ${{ steps.test_report.outputs.artifact-digest }}"
           echo
-          echo "Signing Key       : HCP Vault transit/keys/cosign"
+          echo "CI Status            : PASSED"
+          echo "SBOM Attested        : YES"
+          echo "SLSA Attested        : YES"
+          echo
+          echo "Signing Key          : HCP Vault transit/keys/cosign"
           echo
           echo "=================================================="
 
       # ========================================================
       # 16. TRIGGER HARNESS CD
       #
-      # Sends:
-      # - exact image digest
-      # - Git commit
-      # - GitHub run
-      # - test summary
-      # - test-report URL/digest
+      # Harness receives:
       #
-      # Harness then independently verifies SLSA and SBOM.
+      # IMAGE
+      #   exact immutable artifact digest
+      #
+      # CI
+      #   repository
+      #   commit
+      #   GitHub workflow/run
+      #
+      # TEST EVIDENCE
+      #   GitHub Actions artifact ID
+      #   GitHub artifact digest
+      #   test counts
+      #
+      # SUPPLY CHAIN
+      #   SBOM attested
+      #   SLSA attested
       # ========================================================
       - name: Trigger Harness CD
         env:
@@ -330,6 +371,7 @@ jobs:
             --arg runId "${GITHUB_RUN_ID}" \
             --arg runNumber "${GITHUB_RUN_NUMBER}" \
             --arg runUrl "https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" \
+            --arg testReportArtifactId "${{ steps.test_report.outputs.artifact-id }}" \
             --arg testReportUrl "${{ steps.test_report.outputs.artifact-url }}" \
             --arg testReportDigest "${{ steps.test_report.outputs.artifact-digest }}" \
             --argjson testTotal "${TEST_TOTAL}" \
@@ -359,6 +401,7 @@ jobs:
               testsErrors: $testErrors,
               testsSkipped: $testSkipped,
 
+              testReportArtifactId: $testReportArtifactId,
               testReportUrl: $testReportUrl,
               testReportDigest: $testReportDigest,
 
@@ -373,6 +416,12 @@ jobs:
           echo
           echo "Artifact : ${IMAGE_DIGEST_REF}"
           echo "Tests    : ${TEST_PASSED}/${TEST_TOTAL} passed"
+          echo
+          echo "Test Artifact ID:"
+          echo "${{ steps.test_report.outputs.artifact-id }}"
+          echo
+          echo "Test Artifact Digest:"
+          echo "${{ steps.test_report.outputs.artifact-digest }}"
           echo
 
           echo "Webhook payload:"
