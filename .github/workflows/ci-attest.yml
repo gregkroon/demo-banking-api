@@ -15,21 +15,21 @@ jobs:
     runs-on: ubuntu-latest
 
     env:
-      # --------------------------------------------------------
-      # Artifact
-      # --------------------------------------------------------
+      # ========================================================
+      # ARTIFACT
+      # ========================================================
       IMAGE_NAME: ${{ vars.DOCKER_USERNAME }}/demo-banking-api
       IMAGE_TAG: ${{ github.sha }}
 
-      # --------------------------------------------------------
-      # Docker Hub
-      # --------------------------------------------------------
+      # ========================================================
+      # DOCKER HUB
+      # ========================================================
       DOCKER_USERNAME: ${{ vars.DOCKER_USERNAME }}
       DOCKER_PASSWORD: ${{ secrets.DOCKER_PASSWORD }}
 
-      # --------------------------------------------------------
-      # HCP Vault
-      # --------------------------------------------------------
+      # ========================================================
+      # HCP VAULT
+      # ========================================================
       VAULT_ADDR: ${{ vars.VAULT_URL }}
       VAULT_NAMESPACE: ${{ vars.VAULT_NAMESPACE }}
 
@@ -61,8 +61,8 @@ jobs:
       # ========================================================
       # 4. RUN TESTS
       #
-      # If tests fail, CI stops before building or attesting.
-      # JUnit output becomes the source evidence.
+      # If these fail, the build/attestation/deployment chain
+      # does not proceed.
       # ========================================================
       - name: Run tests
         run: |
@@ -73,7 +73,7 @@ jobs:
             --junitxml=evidence/pytest.xml
 
       # ========================================================
-      # 5. KEEP TEST REPORT IN GITHUB
+      # 5. STORE THE FULL TEST REPORT
       # ========================================================
       - name: Upload test report
         if: always()
@@ -86,7 +86,8 @@ jobs:
       # ========================================================
       # 6. AUTHENTICATE TO HCP VAULT
       #
-      # VAULT_TOKEN is exported for Harness actions + Cosign.
+      # Exports VAULT_TOKEN for subsequent Harness and Cosign
+      # operations.
       # ========================================================
       - name: Authenticate to HCP Vault
         uses: hashicorp/vault-action@v3
@@ -99,7 +100,7 @@ jobs:
           exportToken: true
 
       # ========================================================
-      # 7. VERIFY VAULT KEY ACCESS
+      # 7. VERIFY VAULT SIGNING KEY ACCESS
       # ========================================================
       - name: Verify Vault Cosign key
         run: |
@@ -113,8 +114,6 @@ jobs:
 
       # ========================================================
       # 8. INSTALL COSIGN
-      #
-      # Pin Cosign to the same version used in Harness Run step.
       # ========================================================
       - name: Install Cosign
         uses: sigstore/cosign-installer@v4.1.2
@@ -134,19 +133,20 @@ jobs:
           password: ${{ secrets.DOCKER_PASSWORD }}
 
       # ========================================================
-      # 10. SET UP BUILDX
+      # 10. BUILDX
       # ========================================================
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
       # ========================================================
-      # 11. BUILD + PUSH
+      # 11. BUILD AND PUSH IMAGE
       #
       # IMPORTANT:
-      # One platform only.
+      # - single platform
+      # - Buildx provenance disabled
+      # - Buildx SBOM disabled
       #
-      # Disable Buildx-generated SBOM/provenance because Harness
-      # generates the SBOM and SLSA evidence we want to verify.
+      # Harness creates the SBOM/SLSA attestations.
       # ========================================================
       - name: Build and push image
         id: docker_build
@@ -181,9 +181,8 @@ jobs:
       # ========================================================
       # 13. CREATE TEST EVIDENCE
       #
-      # Turn the JUnit report into a compact signed predicate.
-      # The full JUnit report remains available as a GitHub
-      # workflow artifact.
+      # Converts the JUnit test report into a compact JSON
+      # predicate which will be signed against IMAGE_DIGEST.
       # ========================================================
       - name: Create test evidence
         run: |
@@ -204,6 +203,7 @@ jobs:
               except (TypeError, ValueError):
                   return 0
 
+          # pytest normally produces a testsuites root.
           if root.tag.endswith("testsuite"):
               suites = [root]
           else:
@@ -214,13 +214,17 @@ jobs:
           errors = sum(as_int(s.attrib.get("errors")) for s in suites)
           skipped = sum(as_int(s.attrib.get("skipped")) for s in suites)
 
-          passed = max(total - failures - errors - skipped, 0)
+          passed = max(
+              total - failures - errors - skipped,
+              0
+          )
 
           with open(report, "rb") as f:
               report_sha256 = hashlib.sha256(f.read()).hexdigest()
 
           predicate = {
               "schemaVersion": "1.0",
+
               "status": "PASSED",
               "framework": "pytest",
 
@@ -230,8 +234,13 @@ jobs:
 
               "githubRunId": os.environ["GITHUB_RUN_ID"],
               "githubRunNumber": os.environ["GITHUB_RUN_NUMBER"],
-              "githubRunUrl":
-                  f'https://github.com/{os.environ["GITHUB_REPOSITORY"]}/actions/runs/{os.environ["GITHUB_RUN_ID"]}',
+
+              "githubRunUrl": (
+                  f'https://github.com/'
+                  f'{os.environ["GITHUB_REPOSITORY"]}'
+                  f'/actions/runs/'
+                  f'{os.environ["GITHUB_RUN_ID"]}'
+              ),
 
               "artifactDigest": os.environ["IMAGE_DIGEST"],
 
@@ -247,15 +256,25 @@ jobs:
           }
 
           if total < 1:
-              raise SystemExit("ERROR: no tests were recorded")
+              raise SystemExit(
+                  "ERROR: no tests were recorded"
+              )
 
           if failures != 0 or errors != 0:
-              raise SystemExit("ERROR: test evidence contains failures/errors")
+              raise SystemExit(
+                  "ERROR: test evidence contains failures/errors"
+              )
 
-          with open("evidence/test-results.json", "w") as f:
+          with open(
+              "evidence/test-results.json",
+              "w"
+          ) as f:
               json.dump(predicate, f, indent=2)
 
-          with open(os.environ["GITHUB_ENV"], "a") as f:
+          with open(
+              os.environ["GITHUB_ENV"],
+              "a"
+          ) as f:
               f.write(f"TEST_TOTAL={total}\n")
               f.write(f"TEST_PASSED={passed}\n")
               f.write(f"TEST_FAILURES={failures}\n")
@@ -266,7 +285,7 @@ jobs:
           PY
 
       # ========================================================
-      # 14. GENERATE + ATTEST SBOM IN HARNESS
+      # 14. HARNESS SBOM GENERATION + ATTESTATION
       # ========================================================
       - name: Generate and attest SBOM in Harness
         uses: harness/github-actions/sbom-generation@1.1.0
@@ -286,9 +305,9 @@ jobs:
           KMS_KEY: cosign
 
       # ========================================================
-      # 15. GENERATE + ATTEST SLSA IN HARNESS
+      # 15. HARNESS SLSA GENERATION + ATTESTATION
       #
-      # Keep this sequentially after SBOM.
+      # Deliberately sequential after SBOM.
       # ========================================================
       - name: Generate and attest SLSA provenance in Harness
         uses: harness/github-actions/slsa-generation@1.1.0
@@ -305,21 +324,20 @@ jobs:
           KMS_KEY: cosign
 
       # ========================================================
-      # 16. CREATE SIGNED TEST ATTESTATION
+      # 16. CREATE SIGNED CUSTOM TEST ATTESTATION
       #
-      # IMPORTANT:
-      # Use Cosign's CUSTOM predicate type.
+      # This is attached to the SAME immutable image digest.
       #
-      # This becomes:
-      # predicateType:
+      # Cosign "custom" creates predicateType:
+      #
       # https://cosign.sigstore.dev/attestation/v1
       #
-      # Our JSON lives inside predicate.Data.
+      # Our JSON is stored in predicate.Data.
       # ========================================================
       - name: Attest test results
         run: |
           echo "=============================================="
-          echo "CREATING TEST ATTESTATION"
+          echo "CREATING SIGNED TEST ATTESTATION"
           echo "=============================================="
           echo "Artifact: ${IMAGE_DIGEST_REF}"
 
@@ -330,107 +348,127 @@ jobs:
             --type custom \
             "${IMAGE_DIGEST_REF}"
 
+          echo
           echo "Test attestation created"
 
       # ========================================================
-      # 17. VERIFY CUSTOM TEST ATTESTATION IN GITHUB
+      # 17. CREATE REG0 POLICY FOR THIS EXACT BUILD
       #
-      # This proves:
-      # - registry contains it
-      # - signature verifies with Vault key
-      # - it is a custom attestation
+      # Cosign custom predicates expose our JSON in input.Data.
+      #
+      # IMPORTANT:
+      # Cosign's Rego validator uses allow[msg] as validation
+      # errors: a populated result causes verification failure.
       # ========================================================
-      - name: Verify test attestation
+      - name: Create test attestation policy
+        run: |
+          cat > evidence/test-policy.rego <<EOF
+          package signature
+
+          allow[msg] {
+            test := json.unmarshal(input.Data)
+            test.status != "PASSED"
+            msg := sprintf(
+              "Test status is not PASSED: %v",
+              [test.status]
+            )
+          }
+
+          allow[msg] {
+            test := json.unmarshal(input.Data)
+            test.repository != "${GITHUB_REPOSITORY}"
+            msg := sprintf(
+              "Repository mismatch: %v",
+              [test.repository]
+            )
+          }
+
+          allow[msg] {
+            test := json.unmarshal(input.Data)
+            test.commit != "${GITHUB_SHA}"
+            msg := sprintf(
+              "Commit mismatch: %v",
+              [test.commit]
+            )
+          }
+
+          allow[msg] {
+            test := json.unmarshal(input.Data)
+            test.artifactDigest != "${IMAGE_DIGEST}"
+            msg := sprintf(
+              "Artifact digest mismatch: %v",
+              [test.artifactDigest]
+            )
+          }
+
+          allow[msg] {
+            test := json.unmarshal(input.Data)
+            test.tests.total <= 0
+            msg := sprintf(
+              "No tests executed: %v",
+              [test.tests.total]
+            )
+          }
+
+          allow[msg] {
+            test := json.unmarshal(input.Data)
+            test.tests.failures != 0
+            msg := sprintf(
+              "Test failures detected: %v",
+              [test.tests.failures]
+            )
+          }
+
+          allow[msg] {
+            test := json.unmarshal(input.Data)
+            test.tests.errors != 0
+            msg := sprintf(
+              "Test errors detected: %v",
+              [test.tests.errors]
+            )
+          }
+          EOF
+
+          echo "Test attestation policy created"
+
+      # ========================================================
+      # 18. VERIFY SIGNATURE + TEST POLICY
+      #
+      # Cosign now does BOTH:
+      #
+      # 1. cryptographic attestation verification
+      # 2. Rego policy evaluation
+      #
+      # No manual DSSE/base64/JQ parsing required.
+      # ========================================================
+      - name: Verify signed test evidence
         run: |
           echo "=============================================="
-          echo "VERIFYING TEST ATTESTATION"
+          echo "VERIFYING SIGNED TEST EVIDENCE"
           echo "=============================================="
 
           cosign verify-attestation \
             --key hashivault://cosign \
             --type custom \
+            --policy evidence/test-policy.rego \
             --insecure-ignore-tlog \
             "${IMAGE_DIGEST_REF}" \
-            > evidence/verified-test-attestations.json
+            >/dev/null
 
-          echo "Cryptographic test attestation verification passed"
-
-      # ========================================================
-      # 18. VALIDATE THE SIGNED TEST PREDICATE
-      #
-      # There may be multiple attestations on the same image.
-      # Find a CUSTOM one whose signed Data matches this exact:
-      # - artifact digest
-      # - repository
-      # - commit
-      # - passing test state
-      # ========================================================
-      - name: Validate signed test evidence
-  run: |
-    echo "Creating Cosign policy for this exact build"
-
-    cat > evidence/test-policy.rego <<EOF
-    package signature
-
-    test := json.unmarshal(input.Data)
-
-    allow[msg] {
-      test.status != "PASSED"
-      msg := sprintf("Test status is not PASSED: %v", [test.status])
-    }
-
-    allow[msg] {
-      test.repository != "${GITHUB_REPOSITORY}"
-      msg := sprintf("Repository mismatch: %v", [test.repository])
-    }
-
-    allow[msg] {
-      test.commit != "${GITHUB_SHA}"
-      msg := sprintf("Commit mismatch: %v", [test.commit])
-    }
-
-    allow[msg] {
-      test.artifactDigest != "${IMAGE_DIGEST}"
-      msg := sprintf("Artifact digest mismatch: %v", [test.artifactDigest])
-    }
-
-    allow[msg] {
-      test.tests.total <= 0
-      msg := sprintf("No tests executed: %v", [test.tests.total])
-    }
-
-    allow[msg] {
-      test.tests.failures != 0
-      msg := sprintf("Test failures detected: %v", [test.tests.failures])
-    }
-
-    allow[msg] {
-      test.tests.errors != 0
-      msg := sprintf("Test errors detected: %v", [test.tests.errors])
-    }
-    EOF
-
-    echo "Validating signed test attestation policy"
-
-    cosign verify-attestation \
-      --key hashivault://cosign \
-      --type custom \
-      --policy evidence/test-policy.rego \
-      --insecure-ignore-tlog \
-      "${IMAGE_DIGEST_REF}" \
-      >/dev/null
-
-    echo "=============================================="
-    echo "SIGNED TEST EVIDENCE VALIDATED"
-    echo "=============================================="
-    echo "Artifact   : ${IMAGE_DIGEST_REF}"
-    echo "Commit     : ${GITHUB_SHA}"
-    echo "Repository : ${GITHUB_REPOSITORY}"
-    echo "Tests      : ${TEST_PASSED}/${TEST_TOTAL} passed"
-    echo "=============================================="
+          echo
+          echo "=============================================="
+          echo "SIGNED TEST EVIDENCE VERIFIED"
+          echo "=============================================="
+          echo "Artifact   : ${IMAGE_DIGEST_REF}"
+          echo "Commit     : ${GITHUB_SHA}"
+          echo "Repository : ${GITHUB_REPOSITORY}"
+          echo "Tests      : ${TEST_PASSED}/${TEST_TOTAL} passed"
+          echo "Failures   : ${TEST_FAILURES}"
+          echo "Errors     : ${TEST_ERRORS}"
+          echo "=============================================="
 
       # ========================================================
-      # 19. DISPLAY CHAIN OF CUSTODY
+      # 19. DISPLAY COMPLETE CI CHAIN OF CUSTODY
       # ========================================================
       - name: Display chain of custody
         run: |
@@ -454,6 +492,7 @@ jobs:
           echo "SBOM Attested     : YES"
           echo "SLSA Attested     : YES"
           echo "Tests Attested    : YES"
+          echo "Tests Verified    : YES"
           echo
           echo "Signing Key       : HCP Vault transit/keys/cosign"
           echo
@@ -462,8 +501,8 @@ jobs:
       # ========================================================
       # 20. TRIGGER HARNESS CD
       #
-      # Harness receives the exact immutable artifact identity
-      # plus GitHub CI metadata.
+      # Harness receives the SAME immutable digest plus CI
+      # metadata needed for independent verification.
       # ========================================================
       - name: Trigger Harness CD
         env:
@@ -506,8 +545,10 @@ jobs:
               testsPassed: $testPassed
             }')
 
-          echo "Triggering Harness CD for:"
-          echo "${IMAGE_DIGEST_REF}"
+          echo "=============================================="
+          echo "TRIGGERING HARNESS CD"
+          echo "=============================================="
+          echo "Artifact: ${IMAGE_DIGEST_REF}"
 
           curl --fail-with-body \
             --request POST \
@@ -515,4 +556,5 @@ jobs:
             --url "${HARNESS_CD_WEBHOOK_URL}" \
             --data "${PAYLOAD}"
 
+          echo
           echo "Harness CD successfully triggered"
