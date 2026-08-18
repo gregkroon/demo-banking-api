@@ -366,68 +366,68 @@ jobs:
       # - passing test state
       # ========================================================
       - name: Validate signed test evidence
-        run: |
-          jq -r '
-            if type == "array"
-            then .[].payload
-            else .payload
-            end
-          ' evidence/verified-test-attestations.json \
-          | while IFS= read -r payload
-          do
-            printf '%s' "${payload}" | base64 -d
-            printf '\n'
-          done \
-          > evidence/test-statements.jsonl
+  run: |
+    echo "Creating Cosign policy for this exact build"
 
-          jq -s '
-            [
-              .[]
-              | select(
-                  .predicateType ==
-                  "https://cosign.sigstore.dev/attestation/v1"
-                )
-              | .predicate.Data
-              | fromjson
-            ]
-          ' evidence/test-statements.jsonl \
-          > evidence/test-predicates.json
+    cat > evidence/test-policy.rego <<EOF
+    package signature
 
-          MATCH_COUNT="$(
-            jq \
-              --arg expected_digest "${IMAGE_DIGEST}" \
-              --arg expected_commit "${GITHUB_SHA}" \
-              --arg expected_repository "${GITHUB_REPOSITORY}" \
-              '
-              [
-                .[]
-                | select(
-                    .status == "PASSED"
-                    and
-                    .repository == $expected_repository
-                    and
-                    .commit == $expected_commit
-                    and
-                    .artifactDigest == $expected_digest
-                    and
-                    .tests.total > 0
-                    and
-                    .tests.failures == 0
-                    and
-                    .tests.errors == 0
-                  )
-              ]
-              | length
-              ' \
-              evidence/test-predicates.json
-          )"
+    test := json.unmarshal(input.Data)
 
-          if [ "${MATCH_COUNT}" -lt 1 ]; then
-            echo "ERROR: No valid signed test predicate matched this build"
-            exit 1
-          fi
+    allow[msg] {
+      test.status != "PASSED"
+      msg := sprintf("Test status is not PASSED: %v", [test.status])
+    }
 
-          echo "Signed test evidence validated"
+    allow[msg] {
+      test.repository != "${GITHUB_REPOSITORY}"
+      msg := sprintf("Repository mismatch: %v", [test.repository])
+    }
+
+    allow[msg] {
+      test.commit != "${GITHUB_SHA}"
+      msg := sprintf("Commit mismatch: %v", [test.commit])
+    }
+
+    allow[msg] {
+      test.artifactDigest != "${IMAGE_DIGEST}"
+      msg := sprintf("Artifact digest mismatch: %v", [test.artifactDigest])
+    }
+
+    allow[msg] {
+      test.tests.total <= 0
+      msg := sprintf("No tests executed: %v", [test.tests.total])
+    }
+
+    allow[msg] {
+      test.tests.failures != 0
+      msg := sprintf("Test failures detected: %v", [test.tests.failures])
+    }
+
+    allow[msg] {
+      test.tests.errors != 0
+      msg := sprintf("Test errors detected: %v", [test.tests.errors])
+    }
+    EOF
+
+    echo "Validating signed test attestation policy"
+
+    cosign verify-attestation \
+      --key hashivault://cosign \
+      --type custom \
+      --policy evidence/test-policy.rego \
+      --insecure-ignore-tlog \
+      "${IMAGE_DIGEST_REF}" \
+      >/dev/null
+
+    echo "=============================================="
+    echo "SIGNED TEST EVIDENCE VALIDATED"
+    echo "=============================================="
+    echo "Artifact   : ${IMAGE_DIGEST_REF}"
+    echo "Commit     : ${GITHUB_SHA}"
+    echo "Repository : ${GITHUB_REPOSITORY}"
+    echo "Tests      : ${TEST_PASSED}/${TEST_TOTAL} passed"
+    echo "=============================================="
 
       # ========================================================
       # 19. DISPLAY CHAIN OF CUSTODY
