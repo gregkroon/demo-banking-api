@@ -61,8 +61,12 @@ jobs:
       # ========================================================
       # 4. RUN TESTS
       #
-      # If these fail, the build/attestation/deployment chain
-      # does not proceed.
+      # CRITICAL:
+      # If tests fail, the workflow stops here.
+      #
+      # No image is built.
+      # No SBOM/SLSA is generated.
+      # Harness CD is NOT triggered.
       # ========================================================
       - name: Run tests
         run: |
@@ -73,7 +77,9 @@ jobs:
             --junitxml=evidence/pytest.xml
 
       # ========================================================
-      # 5. STORE THE FULL TEST REPORT
+      # 5. STORE TEST REPORT
+      #
+      # Provides the detailed test evidence in the GitHub run.
       # ========================================================
       - name: Upload test report
         if: always()
@@ -84,10 +90,70 @@ jobs:
           if-no-files-found: warn
 
       # ========================================================
-      # 6. AUTHENTICATE TO HCP VAULT
+      # 6. READ TEST RESULTS
       #
-      # Exports VAULT_TOKEN for subsequent Harness and Cosign
-      # operations.
+      # Extract simple test summary information so it can be
+      # passed to Harness as CI metadata.
+      # ========================================================
+      - name: Record test results
+        run: |
+          python <<'PY'
+          import os
+          import xml.etree.ElementTree as ET
+
+          report = "evidence/pytest.xml"
+
+          tree = ET.parse(report)
+          root = tree.getroot()
+
+          def as_int(value):
+              try:
+                  return int(value or 0)
+              except (TypeError, ValueError):
+                  return 0
+
+          if root.tag.endswith("testsuite"):
+              suites = [root]
+          else:
+              suites = root.findall(".//testsuite")
+
+          total = sum(as_int(s.attrib.get("tests")) for s in suites)
+          failures = sum(as_int(s.attrib.get("failures")) for s in suites)
+          errors = sum(as_int(s.attrib.get("errors")) for s in suites)
+          skipped = sum(as_int(s.attrib.get("skipped")) for s in suites)
+
+          passed = max(
+              total - failures - errors - skipped,
+              0
+          )
+
+          if total < 1:
+              raise SystemExit("ERROR: no tests were recorded")
+
+          if failures != 0 or errors != 0:
+              raise SystemExit("ERROR: test report contains failures/errors")
+
+          with open(os.environ["GITHUB_ENV"], "a") as f:
+              f.write(f"TEST_TOTAL={total}\n")
+              f.write(f"TEST_PASSED={passed}\n")
+              f.write(f"TEST_FAILURES={failures}\n")
+              f.write(f"TEST_ERRORS={errors}\n")
+              f.write(f"TEST_SKIPPED={skipped}\n")
+
+          print(f"Tests total   : {total}")
+          print(f"Tests passed  : {passed}")
+          print(f"Failures      : {failures}")
+          print(f"Errors        : {errors}")
+          print(f"Skipped       : {skipped}")
+          PY
+
+      # ========================================================
+      # 7. AUTHENTICATE TO HCP VAULT
+      #
+      # Harness SBOM/SLSA actions use the persistent Vault
+      # Transit cosign key.
+      #
+      # exportToken exposes VAULT_TOKEN to later steps.
       # ========================================================
       - name: Authenticate to HCP Vault
         uses: hashicorp/vault-action@v3
@@ -100,7 +166,7 @@ jobs:
           exportToken: true
 
       # ========================================================
-      # 7. VERIFY VAULT SIGNING KEY ACCESS
+      # 8. VERIFY VAULT KEY ACCESS
       # ========================================================
       - name: Verify Vault Cosign key
         run: |
@@ -113,17 +179,6 @@ jobs:
           echo "Vault Cosign key accessible"
 
       # ========================================================
-      # 8. INSTALL COSIGN
-      # ========================================================
-      - name: Install Cosign
-        uses: sigstore/cosign-installer@v4.1.2
-        with:
-          cosign-release: v3.0.6
-
-      - name: Check Cosign
-        run: cosign version
-
-      # ========================================================
       # 9. DOCKER LOGIN
       # ========================================================
       - name: Login to Docker Hub
@@ -133,20 +188,21 @@ jobs:
           password: ${{ secrets.DOCKER_PASSWORD }}
 
       # ========================================================
-      # 10. BUILDX
+      # 10. SET UP BUILDX
       # ========================================================
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
       # ========================================================
-      # 11. BUILD AND PUSH IMAGE
+      # 11. BUILD + PUSH IMAGE
       #
       # IMPORTANT:
-      # - single platform
-      # - Buildx provenance disabled
-      # - Buildx SBOM disabled
       #
-      # Harness creates the SBOM/SLSA attestations.
+      # Single platform prevents the OCI index/platform digest
+      # mismatch we previously encountered.
+      #
+      # Buildx SBOM and provenance are disabled because Harness
+      # generates the authoritative SBOM/SLSA evidence.
       # ========================================================
       - name: Build and push image
         id: docker_build
@@ -170,6 +226,7 @@ jobs:
           echo "IMAGE_DIGEST=${IMAGE_DIGEST}" >> "$GITHUB_ENV"
           echo "IMAGE_DIGEST_REF=${IMAGE_DIGEST_REF}" >> "$GITHUB_ENV"
 
+          echo
           echo "=============================================="
           echo "ARTIFACT CREATED"
           echo "=============================================="
@@ -179,113 +236,13 @@ jobs:
           echo "=============================================="
 
       # ========================================================
-      # 13. CREATE TEST EVIDENCE
+      # 13. GENERATE + SIGN SBOM
       #
-      # Converts the JUnit test report into a compact JSON
-      # predicate which will be signed against IMAGE_DIGEST.
-      # ========================================================
-      - name: Create test evidence
-        run: |
-          python <<'PY'
-          import hashlib
-          import json
-          import os
-          import xml.etree.ElementTree as ET
-
-          report = "evidence/pytest.xml"
-
-          tree = ET.parse(report)
-          root = tree.getroot()
-
-          def as_int(value):
-              try:
-                  return int(value or 0)
-              except (TypeError, ValueError):
-                  return 0
-
-          # pytest normally produces a testsuites root.
-          if root.tag.endswith("testsuite"):
-              suites = [root]
-          else:
-              suites = root.findall(".//testsuite")
-
-          total = sum(as_int(s.attrib.get("tests")) for s in suites)
-          failures = sum(as_int(s.attrib.get("failures")) for s in suites)
-          errors = sum(as_int(s.attrib.get("errors")) for s in suites)
-          skipped = sum(as_int(s.attrib.get("skipped")) for s in suites)
-
-          passed = max(
-              total - failures - errors - skipped,
-              0
-          )
-
-          with open(report, "rb") as f:
-              report_sha256 = hashlib.sha256(f.read()).hexdigest()
-
-          predicate = {
-              "schemaVersion": "1.0",
-
-              "status": "PASSED",
-              "framework": "pytest",
-
-              "repository": os.environ["GITHUB_REPOSITORY"],
-              "commit": os.environ["GITHUB_SHA"],
-              "workflow": os.environ["GITHUB_WORKFLOW"],
-
-              "githubRunId": os.environ["GITHUB_RUN_ID"],
-              "githubRunNumber": os.environ["GITHUB_RUN_NUMBER"],
-
-              "githubRunUrl": (
-                  f'https://github.com/'
-                  f'{os.environ["GITHUB_REPOSITORY"]}'
-                  f'/actions/runs/'
-                  f'{os.environ["GITHUB_RUN_ID"]}'
-              ),
-
-              "artifactDigest": os.environ["IMAGE_DIGEST"],
-
-              "tests": {
-                  "total": total,
-                  "passed": passed,
-                  "failures": failures,
-                  "errors": errors,
-                  "skipped": skipped,
-                  "reportFormat": "junit",
-                  "reportSha256": report_sha256
-              }
-          }
-
-          if total < 1:
-              raise SystemExit(
-                  "ERROR: no tests were recorded"
-              )
-
-          if failures != 0 or errors != 0:
-              raise SystemExit(
-                  "ERROR: test evidence contains failures/errors"
-              )
-
-          with open(
-              "evidence/test-results.json",
-              "w"
-          ) as f:
-              json.dump(predicate, f, indent=2)
-
-          with open(
-              os.environ["GITHUB_ENV"],
-              "a"
-          ) as f:
-              f.write(f"TEST_TOTAL={total}\n")
-              f.write(f"TEST_PASSED={passed}\n")
-              f.write(f"TEST_FAILURES={failures}\n")
-              f.write(f"TEST_ERRORS={errors}\n")
-              f.write(f"TEST_SKIPPED={skipped}\n")
-
-          print(json.dumps(predicate, indent=2))
-          PY
-
-      # ========================================================
-      # 14. HARNESS SBOM GENERATION + ATTESTATION
+      # Harness:
+      # - scans the image
+      # - generates SBOM
+      # - signs/attests it with Vault transit/keys/cosign
+      # - uploads normalized SBOM to Harness SCS
       # ========================================================
       - name: Generate and attest SBOM in Harness
         uses: harness/github-actions/sbom-generation@1.1.0
@@ -305,7 +262,7 @@ jobs:
           KMS_KEY: cosign
 
       # ========================================================
-      # 15. HARNESS SLSA GENERATION + ATTESTATION
+      # 14. GENERATE + SIGN SLSA PROVENANCE
       #
       # Deliberately sequential after SBOM.
       # ========================================================
@@ -324,151 +281,7 @@ jobs:
           KMS_KEY: cosign
 
       # ========================================================
-      # 16. CREATE SIGNED CUSTOM TEST ATTESTATION
-      #
-      # This is attached to the SAME immutable image digest.
-      #
-      # Cosign "custom" creates predicateType:
-      #
-      # https://cosign.sigstore.dev/attestation/v1
-      #
-      # Our JSON is stored in predicate.Data.
-      # ========================================================
-      - name: Attest test results
-        run: |
-          echo "=============================================="
-          echo "CREATING SIGNED TEST ATTESTATION"
-          echo "=============================================="
-          echo "Artifact: ${IMAGE_DIGEST_REF}"
-
-          cosign attest \
-            --yes \
-            --key hashivault://cosign \
-            --predicate evidence/test-results.json \
-            --type custom \
-            "${IMAGE_DIGEST_REF}"
-
-          echo
-          echo "Test attestation created"
-
-      # ========================================================
-      # 17. CREATE REG0 POLICY FOR THIS EXACT BUILD
-      #
-      # Cosign custom predicates expose our JSON in input.Data.
-      #
-      # IMPORTANT:
-      # Cosign's Rego validator uses allow[msg] as validation
-      # errors: a populated result causes verification failure.
-      # ========================================================
-      - name: Create test attestation policy
-        run: |
-          cat > evidence/test-policy.rego <<EOF
-          package signature
-
-          allow[msg] {
-            test := json.unmarshal(input.Data)
-            test.status != "PASSED"
-            msg := sprintf(
-              "Test status is not PASSED: %v",
-              [test.status]
-            )
-          }
-
-          allow[msg] {
-            test := json.unmarshal(input.Data)
-            test.repository != "${GITHUB_REPOSITORY}"
-            msg := sprintf(
-              "Repository mismatch: %v",
-              [test.repository]
-            )
-          }
-
-          allow[msg] {
-            test := json.unmarshal(input.Data)
-            test.commit != "${GITHUB_SHA}"
-            msg := sprintf(
-              "Commit mismatch: %v",
-              [test.commit]
-            )
-          }
-
-          allow[msg] {
-            test := json.unmarshal(input.Data)
-            test.artifactDigest != "${IMAGE_DIGEST}"
-            msg := sprintf(
-              "Artifact digest mismatch: %v",
-              [test.artifactDigest]
-            )
-          }
-
-          allow[msg] {
-            test := json.unmarshal(input.Data)
-            test.tests.total <= 0
-            msg := sprintf(
-              "No tests executed: %v",
-              [test.tests.total]
-            )
-          }
-
-          allow[msg] {
-            test := json.unmarshal(input.Data)
-            test.tests.failures != 0
-            msg := sprintf(
-              "Test failures detected: %v",
-              [test.tests.failures]
-            )
-          }
-
-          allow[msg] {
-            test := json.unmarshal(input.Data)
-            test.tests.errors != 0
-            msg := sprintf(
-              "Test errors detected: %v",
-              [test.tests.errors]
-            )
-          }
-          EOF
-
-          echo "Test attestation policy created"
-
-      # ========================================================
-      # 18. VERIFY SIGNATURE + TEST POLICY
-      #
-      # Cosign now does BOTH:
-      #
-      # 1. cryptographic attestation verification
-      # 2. Rego policy evaluation
-      #
-      # No manual DSSE/base64/JQ parsing required.
-      # ========================================================
-      - name: Verify signed test evidence
-        run: |
-          echo "=============================================="
-          echo "VERIFYING SIGNED TEST EVIDENCE"
-          echo "=============================================="
-
-          cosign verify-attestation \
-            --key hashivault://cosign \
-            --type custom \
-            --policy evidence/test-policy.rego \
-            --insecure-ignore-tlog \
-            "${IMAGE_DIGEST_REF}" \
-            >/dev/null
-
-          echo
-          echo "=============================================="
-          echo "SIGNED TEST EVIDENCE VERIFIED"
-          echo "=============================================="
-          echo "Artifact   : ${IMAGE_DIGEST_REF}"
-          echo "Commit     : ${GITHUB_SHA}"
-          echo "Repository : ${GITHUB_REPOSITORY}"
-          echo "Tests      : ${TEST_PASSED}/${TEST_TOTAL} passed"
-          echo "Failures   : ${TEST_FAILURES}"
-          echo "Errors     : ${TEST_ERRORS}"
-          echo "=============================================="
-
-      # ========================================================
-      # 19. DISPLAY COMPLETE CI CHAIN OF CUSTODY
+      # 15. DISPLAY CI CHAIN OF CUSTODY
       # ========================================================
       - name: Display chain of custody
         run: |
@@ -479,7 +292,8 @@ jobs:
           echo
           echo "Repository        : ${GITHUB_REPOSITORY}"
           echo "Commit            : ${GITHUB_SHA}"
-          echo "GitHub Run        : ${GITHUB_RUN_ID}"
+          echo "GitHub Run ID     : ${GITHUB_RUN_ID}"
+          echo "GitHub Run URL    : https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
           echo
           echo "Artifact          : ${IMAGE_DIGEST_REF}"
           echo
@@ -489,20 +303,21 @@ jobs:
           echo "Tests Errors      : ${TEST_ERRORS}"
           echo "Tests Skipped     : ${TEST_SKIPPED}"
           echo
+          echo "CI Status         : PASSED"
           echo "SBOM Attested     : YES"
           echo "SLSA Attested     : YES"
-          echo "Tests Attested    : YES"
-          echo "Tests Verified    : YES"
           echo
           echo "Signing Key       : HCP Vault transit/keys/cosign"
           echo
           echo "=================================================="
 
       # ========================================================
-      # 20. TRIGGER HARNESS CD
+      # 16. TRIGGER HARNESS CD
       #
-      # Harness receives the SAME immutable digest plus CI
-      # metadata needed for independent verification.
+      # Pass the exact immutable image digest plus CI metadata.
+      #
+      # Harness independently verifies the signed SBOM/SLSA
+      # before deployment.
       # ========================================================
       - name: Trigger Harness CD
         env:
@@ -515,12 +330,17 @@ jobs:
             --arg imageDigestRef "${IMAGE_DIGEST_REF}" \
             --arg commit "${GITHUB_SHA}" \
             --arg repository "${GITHUB_REPOSITORY}" \
+            --arg workflow "${GITHUB_WORK "${GITHUB_REPOSITORY}" \
+            --arg workflow "${GITHUB_WORK "${GITHUB_REPOSITORY}" \
             --arg workflow "${GITHUB_WORKFLOW}" \
             --arg runId "${GITHUB_RUN_ID}" \
             --arg runNumber "${GITHUB_RUN_NUMBER}" \
             --arg runUrl "https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" \
             --argjson testTotal "${TEST_TOTAL}" \
             --argjson testPassed "${TEST_PASSED}" \
+            --argjson testFailures "${TEST_FAILURES}" \
+            --argjson testErrors "${TEST_ERRORS}" \
+            --argjson testSkipped "${TEST_SKIPPED}" \
             '{
               image: $image,
               tag: $tag,
@@ -537,18 +357,23 @@ jobs:
 
               ciStatus: "PASSED",
 
-              sbomAttested: true,
-              slsaAttested: true,
-              testsAttested: true,
-
               testsTotal: $testTotal,
-              testsPassed: $testPassed
+              testsPassed: $testPassed,
+              testsFailures: $testFailures,
+              testsErrors: $testErrors,
+              testsSkipped: $testSkipped,
+
+              sbomAttested: true,
+              slsaAttested: true
             }')
 
+          echo
           echo "=============================================="
           echo "TRIGGERING HARNESS CD"
           echo "=============================================="
-          echo "Artifact: ${IMAGE_DIGEST_REF}"
+          echo "Artifact : ${IMAGE_DIGEST_REF}"
+          echo "Tests    : ${TEST_PASSED}/${TEST_TOTAL} passed"
+          echo
 
           curl --fail-with-body \
             --request POST \
