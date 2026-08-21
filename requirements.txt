@@ -1,4 +1,4 @@
-# Patched requirements — CVEs resolved per STO findings1234
+# Patched requirements — CVEs resolved per STO findings1
 Flask==2.3.3
 Werkzeug==2.3.7
 cryptography==42.0.5
