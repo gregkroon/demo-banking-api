@@ -430,6 +430,7 @@ jobs:
           curl --fail-with-body \
             --request POST \
             --header "Content-Type: application/json" \
+            --header 'X-Api-Key: ${HARNESS_CD_API_KEY}'
             --url "${HARNESS_CD_WEBHOOK_URL}" \
             --data "${PAYLOAD}"
 
