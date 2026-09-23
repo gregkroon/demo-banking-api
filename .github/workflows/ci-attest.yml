@@ -14,6 +14,29 @@ jobs:
     name: Test Build Attest Deploy
     runs-on: ubuntu-latest
 
+    # ========================================================
+    # LOCAL VAULT OSS
+    #
+    # Ephemeral Vault instance for this workflow run only.
+    # GitHub automatically destroys it when the job finishes.
+    #
+    # Harness Docker actions can address this service using:
+    #   http://vault:8200
+    #
+    # Normal shell steps running on the runner use:
+    #   http://127.0.0.1:8200
+    # ========================================================
+    services:
+      vault:
+        image: hashicorp/vault:latest
+        env:
+          VAULT_DEV_ROOT_TOKEN_ID: demo-root-token
+          VAULT_DEV_LISTEN_ADDRESS: 0.0.0.0:8200
+        ports:
+          - 8200:8200
+        options: >-
+          --cap-add=IPC_LOCK
+
     env:
       # ========================================================
       # ARTIFACT
@@ -28,10 +51,17 @@ jobs:
       DOCKER_PASSWORD: ${{ secrets.DOCKER_PASSWORD }}
 
       # ========================================================
-      # HCP VAULT
+      # LOCAL VAULT
+      #
+      # VAULT_ADDR is used by the Harness Docker actions.
+      # They run as containers on the GitHub Actions network,
+      # so they can resolve the Vault service as "vault".
+      #
+      # VAULT_HOST_ADDR is used by normal runner shell steps.
       # ========================================================
-      VAULT_ADDR: ${{ vars.VAULT_URL }}
-      VAULT_NAMESPACE: ${{ vars.VAULT_NAMESPACE }}
+      VAULT_ADDR: http://vault:8200
+      VAULT_HOST_ADDR: http://127.0.0.1:8200
+      VAULT_TOKEN: demo-root-token
 
     steps:
 
@@ -93,10 +123,6 @@ jobs:
 
       # ========================================================
       # 6. RECORD TEST SUMMARY
-      #
-      # This is metadata for visibility.
-      #
-      # Harness will independently inspect pytest.xml later.
       # ========================================================
       - name: Record test results
         run: |
@@ -170,35 +196,96 @@ jobs:
           PY
 
       # ========================================================
-      # 7. AUTHENTICATE TO HCP VAULT
-      #
-      # Exports VAULT_TOKEN for the Harness SBOM/SLSA actions.
+      # 7. WAIT FOR LOCAL VAULT
       # ========================================================
-      - name: Authenticate to HCP Vault
-        uses: hashicorp/vault-action@v3
-        with:
-          url: ${{ vars.VAULT_URL }}
-          namespace: ${{ vars.VAULT_NAMESPACE }}
-          method: approle
-          roleId: ${{ secrets.VAULT_ROLE_ID }}
-          secretId: ${{ secrets.VAULT_SECRET_ID }}
-          exportToken: true
+      - name: Wait for local Vault
+        run: |
+          echo "Waiting for Vault..."
+
+          for i in {1..30}; do
+            if curl --silent --fail \
+              "${VAULT_HOST_ADDR}/v1/sys/health" \
+              >/dev/null; then
+
+              echo "Vault is ready"
+              exit 0
+            fi
+
+            echo "Vault not ready yet..."
+            sleep 2
+          done
+
+          echo "ERROR: Vault did not become ready"
+          exit 1
 
       # ========================================================
-      # 8. VERIFY VAULT COSIGN KEY
+      # 8. CONFIGURE VAULT TRANSIT ENGINE + COSIGN KEY
+      #
+      # Creates:
+      #
+      #   transit/
+      #       keys/
+      #           cosign
+      #
+      # Key type:
+      #   ecdsa-p256
+      #
+      # This gives Harness a real Vault-backed signing key.
+      # ========================================================
+      - name: Configure Vault signing key
+        run: |
+          echo "Enabling Vault Transit secrets engine..."
+
+          curl --fail-with-body \
+            --request POST \
+            --header "X-Vault-Token: ${VAULT_TOKEN}" \
+            --header "Content-Type: application/json" \
+            --data '{"type":"transit"}' \
+            "${VAULT_HOST_ADDR}/v1/sys/mounts/transit"
+
+          echo
+          echo "Creating ecdsa-p256 Cosign signing key..."
+
+          curl --fail-with-body \
+            --request POST \
+            --header "X-Vault-Token: ${VAULT_TOKEN}" \
+            --header "Content-Type: application/json" \
+            --data '{"type":"ecdsa-p256"}' \
+            "${VAULT_HOST_ADDR}/v1/transit/keys/cosign"
+
+          echo
+          echo "Vault Transit signing key created"
+
+      # ========================================================
+      # 9. VERIFY VAULT COSIGN KEY
       # ========================================================
       - name: Verify Vault Cosign key
         run: |
-          curl --fail \
+          RESPONSE=$(curl --silent --fail \
             --header "X-Vault-Token: ${VAULT_TOKEN}" \
-            --header "X-Vault-Namespace: ${VAULT_NAMESPACE}" \
-            "${VAULT_ADDR}/v1/transit/keys/cosign" \
-            >/dev/null
+            "${VAULT_HOST_ADDR}/v1/transit/keys/cosign")
 
-          echo "Vault Cosign key accessible"
+          echo "${RESPONSE}" | jq .
+
+          KEY_TYPE=$(echo "${RESPONSE}" | jq -r '.data.type')
+
+          if [ "${KEY_TYPE}" != "ecdsa-p256" ]; then
+            echo "ERROR: expected ecdsa-p256 key"
+            echo "Actual key type: ${KEY_TYPE}"
+            exit 1
+          fi
+
+          echo
+          echo "=============================================="
+          echo "VAULT SIGNING KEY READY"
+          echo "=============================================="
+          echo "Engine : transit"
+          echo "Key    : cosign"
+          echo "Type   : ${KEY_TYPE}"
+          echo "=============================================="
 
       # ========================================================
-      # 9. LOGIN TO DOCKER HUB
+      # 10. LOGIN TO DOCKER HUB
       # ========================================================
       - name: Login to Docker Hub
         uses: docker/login-action@v3
@@ -207,21 +294,18 @@ jobs:
           password: ${{ secrets.DOCKER_PASSWORD }}
 
       # ========================================================
-      # 10. SET UP BUILDX
+      # 11. SET UP BUILDX
       # ========================================================
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
       # ========================================================
-      # 11. BUILD + PUSH IMAGE
+      # 12. BUILD + PUSH IMAGE
       #
-      # IMPORTANT:
+      # Single platform avoids OCI index/platform digest
+      # mismatch.
       #
-      # Single platform avoids the OCI index/platform digest
-      # mismatch we previously encountered.
-      #
-      # Buildx-generated SBOM/provenance is disabled because
-      # Harness generates and signs those attestations.
+      # Harness will generate the SBOM and provenance.
       # ========================================================
       - name: Build and push image
         id: docker_build
@@ -235,7 +319,7 @@ jobs:
           sbom: false
 
       # ========================================================
-      # 12. RECORD IMMUTABLE ARTIFACT IDENTITY
+      # 13. RECORD IMMUTABLE ARTIFACT IDENTITY
       # ========================================================
       - name: Record artifact identity
         run: |
@@ -255,13 +339,19 @@ jobs:
           echo "=============================================="
 
       # ========================================================
-      # 13. GENERATE + SIGN SBOM
+      # 14. GENERATE + SIGN SBOM
       #
       # Harness:
       # - scans the image
       # - generates the SBOM
-      # - signs/attests with Vault transit/keys/cosign
+      # - signs with Vault Transit cosign key
       # - uploads/normalizes SBOM into Harness SCS
+      #
+      # IMPORTANT:
+      # VAULT_ADDR=http://vault:8200
+      # VAULT_TOKEN=demo-root-token
+      #
+      # are inherited by this Docker action.
       # ========================================================
       - name: Generate and attest SBOM in Harness
         uses: harness/github-actions/sbom-generation@1.1.0
@@ -281,9 +371,7 @@ jobs:
           KMS_KEY: cosign
 
       # ========================================================
-      # 14. GENERATE + SIGN SLSA PROVENANCE
-      #
-      # Keep sequentially after SBOM.
+      # 15. GENERATE + SIGN SLSA PROVENANCE
       # ========================================================
       - name: Generate and attest SLSA provenance in Harness
         uses: harness/github-actions/slsa-generation@1.1.0
@@ -300,7 +388,7 @@ jobs:
           KMS_KEY: cosign
 
       # ========================================================
-      # 15. DISPLAY CI CHAIN OF CUSTODY
+      # 16. DISPLAY CI CHAIN OF CUSTODY
       # ========================================================
       - name: Display chain of custody
         run: |
@@ -329,12 +417,14 @@ jobs:
           echo "SBOM Attested        : YES"
           echo "SLSA Attested        : YES"
           echo
-          echo "Signing Key          : HCP Vault transit/keys/cosign"
+          echo "Signing Provider     : HashiCorp Vault OSS"
+          echo "Signing Key          : transit/keys/cosign"
+          echo "Vault Lifetime       : This GitHub workflow only"
           echo
           echo "=================================================="
 
       # ========================================================
-      # 16. TRIGGER HARNESS CD
+      # 17. TRIGGER HARNESS CD
       #
       # Harness receives:
       #
@@ -358,6 +448,7 @@ jobs:
       - name: Trigger Harness CD
         env:
           HARNESS_CD_WEBHOOK_URL: ${{ secrets.HARNESS_CD_WEBHOOK_URL }}
+          HARNESS_CD_API_KEY: ${{ secrets.HARNESS_CD_API_KEY }}
 
         run: |
           PAYLOAD=$(jq -n \
@@ -423,7 +514,6 @@ jobs:
           echo "Test Artifact Digest:"
           echo "${{ steps.test_report.outputs.artifact-digest }}"
           echo
-
           echo "Webhook payload:"
           echo "${PAYLOAD}" | jq .
 
