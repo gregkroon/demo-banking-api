@@ -328,7 +328,7 @@ jobs:
       # - uploads SBOM to Harness SCS
       # ========================================================
       - name: Generate and attest SBOM in Harness
-        uses: harness/github-actions/sbom-generation@1.1.0
+        uses: ./.github/actions/sbom-generation 
         with:
           HARNESS_ACCOUNT_URL: https://app.harness.io
           HARNESS_ACCOUNT_ID: ${{ vars.HARNESS_ACCOUNT_ID }}
