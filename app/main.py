@@ -147,4 +147,4 @@ def list_transactions():
 
 
 if __name__ == "__main__":  # pragma: no cover
-    app.run(host="0.0.0.0", port=8080, debug=False)
+    app.run(host=os.environ.get("FLASK_RUN_HOST", "127.0.0.1"), port=8080, debug=False)

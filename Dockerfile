@@ -18,4 +18,9 @@ ENV FLASK_APP=app.main \
     FLASK_ENV=production \
     PYTHONUNBUFFERED=1
 
+RUN addgroup --system appgroup && adduser --system --ingroup appgroup appuser \
+    && chown -R appuser:appgroup /app
+
+USER appuser
+
 CMD ["gunicorn", "--bind", "0.0.0.0:8080", "--workers", "2", "--timeout", "60", "app.main:app"]
